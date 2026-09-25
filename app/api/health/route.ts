@@ -15,6 +15,26 @@ import { NextResponse } from "next/server";
 import { serverEnv } from "@/lib/env";
 import { supabaseAdmin } from "@/lib/supabase";
 
+// Turns any thrown value into a readable string. A real JS Error has
+// .message, but Supabase's own errors are plain objects shaped like
+// { message, code, details, hint } and are NOT instances of Error, so
+// `err instanceof Error` misses them and falls back to the useless
+// "[object Object]". This checks for a usable .message field first,
+// on anything, before giving up and stringifying the whole thing.
+function describeError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object" && "message" in err && typeof (err as { message: unknown }).message === "string") {
+    const e = err as { message: string; code?: string; details?: string; hint?: string };
+    const parts = [e.message, e.code && `code: ${e.code}`, e.details, e.hint].filter(Boolean);
+    return parts.join(" | ");
+  }
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
 export async function GET() {
   let envOk = false;
   let envError: string | null = null;
@@ -22,7 +42,7 @@ export async function GET() {
     serverEnv();
     envOk = true;
   } catch (err) {
-    envError = err instanceof Error ? err.message : String(err);
+    envError = describeError(err);
   }
 
   if (!envOk) {
@@ -43,7 +63,7 @@ export async function GET() {
     databaseOk = true;
     settingsRowCount = count ?? 0;
   } catch (err) {
-    databaseError = err instanceof Error ? err.message : String(err);
+    databaseError = describeError(err);
   }
 
   const ok = envOk && databaseOk;
