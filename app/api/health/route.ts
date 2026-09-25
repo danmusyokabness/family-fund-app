@@ -5,29 +5,26 @@
 //     throw otherwise, and that throw is caught and reported below)
 //   * the service-role key can actually reach Supabase and read a table
 //
-// It reveals only booleans and counts, never row contents, so it is safe
-// to leave in place (the daily cron job in Step 9 replaces this as the
-// real keep-alive; this route is mainly for manual/testing use).
+// This version talks to Supabase's REST API directly with a plain fetch,
+// rather than going through the @supabase/supabase-js client. That's
+// deliberate: when something is misconfigured (wrong URL, wrong key, or
+// the project itself being unreachable), the client's error object can
+// come back in a shape this code didn't expect and show nothing useful.
+// A raw fetch always gives us a real HTTP status code and response body
+// to look at, which makes the actual problem obvious instead of guessed.
+//
+// It reveals only booleans, counts and the bare Supabase response, never
+// anything about your members or payments, so it is safe to leave in
+// place (the daily cron job in Step 9 replaces this as the real
+// keep-alive; this route is mainly for manual/testing use).
 //
 // Try it at: /api/health
 
 import { NextResponse } from "next/server";
 import { serverEnv } from "@/lib/env";
-import { supabaseAdmin } from "@/lib/supabase";
 
-// Turns any thrown value into a readable string. A real JS Error has
-// .message, but Supabase's own errors are plain objects shaped like
-// { message, code, details, hint } and are NOT instances of Error, so
-// `err instanceof Error` misses them and falls back to the useless
-// "[object Object]". This checks for a usable .message field first,
-// on anything, before giving up and stringifying the whole thing.
 function describeError(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (err && typeof err === "object" && "message" in err && typeof (err as { message: unknown }).message === "string") {
-    const e = err as { message: string; code?: string; details?: string; hint?: string };
-    const parts = [e.message, e.code && `code: ${e.code}`, e.details, e.hint].filter(Boolean);
-    return parts.join(" | ");
-  }
+  if (err instanceof Error) return err.message || err.name || "Unknown error (no message)";
   try {
     return JSON.stringify(err);
   } catch {
@@ -36,47 +33,75 @@ function describeError(err: unknown): string {
 }
 
 export async function GET() {
-  let envOk = false;
-  let envError: string | null = null;
+  // ---- 1. Environment variables ---------------------------------------
+  let env: ReturnType<typeof serverEnv>;
   try {
-    serverEnv();
-    envOk = true;
+    env = serverEnv();
   } catch (err) {
-    envError = describeError(err);
-  }
-
-  if (!envOk) {
     return NextResponse.json(
-      { ok: false, env: { ok: false, error: envError }, database: { ok: false } },
+      { ok: false, env: { ok: false, error: describeError(err) }, database: { ok: false } },
       { status: 500 }
     );
   }
 
+  // ---- 2. A direct, raw request to Supabase's REST API ----------------
+  // This asks for zero rows from "settings" but with Prefer: count=exact,
+  // so Supabase reports the row count in a response header without us
+  // needing to read any actual data.
+  const url = `${env.supabaseUrl.replace(/\/$/, "")}/rest/v1/settings?select=key&limit=0`;
+
   let databaseOk = false;
-  let databaseError: string | null = null;
+  let httpStatus: number | null = null;
+  let responseBody: string | null = null;
   let settingsRowCount: number | null = null;
+  let fetchError: string | null = null;
 
   try {
-    const db = supabaseAdmin();
-    const { count, error } = await db.from("settings").select("*", { count: "exact", head: true });
-    if (error) throw error;
-    databaseOk = true;
-    settingsRowCount = count ?? 0;
+    const res = await fetch(url, {
+      method: "GET",
+      headers: {
+        apikey: env.supabaseServiceRoleKey,
+        Authorization: `Bearer ${env.supabaseServiceRoleKey}`,
+        Prefer: "count=exact",
+      },
+      // Never cache a health check.
+      cache: "no-store",
+    });
+
+    httpStatus = res.status;
+    const bodyText = await res.text();
+    // Keep the response short in the JSON we return, in case Supabase
+    // ever sends back something long (e.g. an HTML error page).
+    responseBody = bodyText.slice(0, 500);
+
+    if (res.ok) {
+      databaseOk = true;
+      // Supabase returns counts like "0-(-1)/17" in Content-Range.
+      const contentRange = res.headers.get("content-range");
+      const match = contentRange?.match(/\/(\d+)$/);
+      settingsRowCount = match ? Number(match[1]) : null;
+    }
   } catch (err) {
-    databaseError = describeError(err);
+    // This branch means the request itself never got a response at all —
+    // e.g. the URL is wrong, or the project can't be reached.
+    fetchError = describeError(err);
   }
 
-  const ok = envOk && databaseOk;
+  const ok = databaseOk;
 
   return NextResponse.json(
     {
       ok,
-      env: { ok: envOk },
+      env: { ok: true },
       database: {
         ok: databaseOk,
-        error: databaseError,
-        // Expected to be 0 right after Step 1 — settings are only
-        // written once the Setup page (Step 4) is used.
+        httpStatus,
+        // Populated only when the request failed AFTER getting a response
+        // from Supabase (e.g. wrong key, table missing, RLS blocking it).
+        responseBody: databaseOk ? null : responseBody,
+        // Populated only when the request could not be sent/received at
+        // all (e.g. wrong URL, project unreachable).
+        fetchError,
         settingsRowCount,
       },
       timestamp: new Date().toISOString(),
