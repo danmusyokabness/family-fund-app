@@ -23,8 +23,11 @@ export default async function AdminHome() {
             <span className="font-medium text-slate-800">Members</span>
             <p className="text-sm text-slate-500">Add, edit, deactivate, or bulk-import members.</p>
           </a>
+          <a href="/admin/payments" className="block rounded-md border border-slate-200 px-4 py-3 hover:bg-slate-50">
+            <span className="font-medium text-slate-800">Payments</span>
+            <p className="text-sm text-slate-500">Record, confirm, split, or reassign payments; fund expenses.</p>
+          </a>
         </div>
-        <p className="text-sm text-slate-500">Payments are built in Step 5.</p>
         <LogoutButton type="admin" />
       </div>
     </main>
