@@ -23,7 +23,18 @@ export async function GET() {
   const stored: Record<string, string> = {};
   for (const row of data ?? []) stored[row.key] = row.value;
 
-  return NextResponse.json({ settings: mergeSettingsWithDefaults(stored) });
+  const settings = mergeSettingsWithDefaults(stored);
+
+  // If site_url has never been saved, suggest Vercel's own production
+  // domain rather than leaving the field blank with no hint. Vercel sets
+  // this automatically on every deploy; it's just a starting suggestion —
+  // still fully editable, and needed at all because a custom domain or a
+  // non-Vercel host wouldn't be known here otherwise.
+  if (!stored.site_url && process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    settings.site_url = `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  }
+
+  return NextResponse.json({ settings });
 }
 
 export async function POST(req: NextRequest) {

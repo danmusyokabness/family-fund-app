@@ -115,13 +115,55 @@ export async function getMemberSession(): Promise<{ memberId: string; fullName: 
   return { memberId: payload.memberId, fullName: payload.fullName };
 }
 
-export async function getAdminSession(): Promise<boolean> {
+/**
+ * Checks the superadmin cookie only (the original username/password
+ * login). Most code should use getAdminSession() / requireAdmin()
+ * instead, which also recognise a member flagged as admin — this one is
+ * for the one place that specifically needs "superadmin, not just any
+ * admin": granting or removing another member's admin access.
+ */
+export async function getSuperAdminSession(): Promise<boolean> {
   const env = serverEnv();
   const store = await cookies();
   const token = store.get(ADMIN_SESSION_COOKIE)?.value;
   if (!token) return false;
   const payload = verifySessionToken<AdminSessionPayload>(token, env.sessionSecret);
   return payload !== null && payload.kind === "admin";
+}
+
+export interface AdminContext {
+  isAdmin: boolean;
+  isSuperAdmin: boolean;
+  /** The member's id, only when admin access comes from being a flagged member (not the superadmin). */
+  memberId: string | null;
+}
+
+/**
+ * The one place that decides "is this visitor an admin", counting BOTH
+ * the superadmin login AND any member with members.is_admin = true.
+ * The superadmin is checked first so a logged-in member never needs an
+ * extra database lookup just to confirm what their own cookie already proves.
+ */
+export async function getAdminContext(): Promise<AdminContext> {
+  const isSuperAdmin = await getSuperAdminSession();
+  if (isSuperAdmin) {
+    return { isAdmin: true, isSuperAdmin: true, memberId: null };
+  }
+
+  const member = await getMemberSession();
+  if (!member) {
+    return { isAdmin: false, isSuperAdmin: false, memberId: null };
+  }
+
+  const db = supabaseAdmin();
+  const { data } = await db.from("members").select("is_admin").eq("id", member.memberId).maybeSingle();
+  const isAdmin = data?.is_admin === true;
+  return { isAdmin, isSuperAdmin: false, memberId: isAdmin ? member.memberId : null };
+}
+
+/** Convenience boolean version of getAdminContext(), for page guards that don't need the detail. */
+export async function getAdminSession(): Promise<boolean> {
+  return (await getAdminContext()).isAdmin;
 }
 
 // ---- Guards for API routes ---------------------------------------------
@@ -136,10 +178,20 @@ export async function requireMember(): Promise<GuardResult<{ member: { memberId:
   return { ok: true, member };
 }
 
-export async function requireAdmin(): Promise<GuardResult> {
-  const isAdmin = await getAdminSession();
-  if (!isAdmin) {
+/** Admin OR member-admin — what most admin routes should use. */
+export async function requireAdmin(): Promise<GuardResult<{ admin: AdminContext }>> {
+  const admin = await getAdminContext();
+  if (!admin.isAdmin) {
     return { ok: false, response: NextResponse.json({ error: "Admin login required." }, { status: 401 }) };
+  }
+  return { ok: true, admin };
+}
+
+/** Superadmin only — for the one action a member-admin should NOT be able to do: granting admin access. */
+export async function requireSuperAdmin(): Promise<GuardResult> {
+  const isSuperAdmin = await getSuperAdminSession();
+  if (!isSuperAdmin) {
+    return { ok: false, response: NextResponse.json({ error: "Superadmin login required." }, { status: 403 }) };
   }
   return { ok: true };
 }

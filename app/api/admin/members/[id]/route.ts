@@ -12,7 +12,7 @@
 // deleting, per the project's "undo, not delete" rule.
 
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/auth";
+import { requireAdmin, requireSuperAdmin } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { normalizePhone } from "@/lib/phone";
 
@@ -32,6 +32,8 @@ interface UpdateMemberBody {
   primaryPhone?: string;
   alternatePhones?: string[];
   shortcodes?: string[];
+  /** Granting or removing admin access — SUPERADMIN ONLY, checked separately below. */
+  isAdmin?: boolean;
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -70,6 +72,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   if (body.isActive !== undefined) updates.is_active = body.isActive;
   if (body.notes !== undefined) updates.notes = body.notes.trim() || null;
+
+  if (body.isAdmin !== undefined) {
+    const superAuth = await requireSuperAdmin();
+    if (!superAuth.ok) return superAuth.response;
+    updates.is_admin = body.isAdmin;
+  }
 
   if (Object.keys(updates).length > 0) {
     const { error } = await db.from("members").update(updates).eq("id", id);
@@ -111,7 +119,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const { data: updated } = await db
     .from("members")
     .select(
-      "id, full_name, joined_on, is_active, notes, " +
+      "id, full_name, joined_on, is_active, is_admin, notes, " +
         "member_phones(id, phone_number, is_primary), " +
         "payer_aliases(id, alias_type, alias_value)"
     )

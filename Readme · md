@@ -1,6 +1,94 @@
 # Family Emergency Fund Platform: Project Completion Plan (v4)
 
-Status: **PLAN v4, awaiting approval.** No code has been changed yet.
+# Family Emergency Fund Platform: Project Completion Plan (v4)
+
+## ▶ HOW TO RESUME THIS PROJECT IN A NEW CHAT
+
+If this chat is ever lost, deleted, or you just want a fresh start (e.g. it's gotten long), do this in a **new** Claude chat:
+
+1. **Attach this README file.** It is the single source of truth for every decision made, every rule agreed on, and exactly what's built so far.
+2. **Also attach a fresh .zip of your actual project folder** (or share the GitHub repo link if it's public). This README describes *intent* — the code itself is the source of truth for what's actually implemented. A new chat needs to read the real files, not just this description of them.
+3. Say something like: **"Continue this project — read the README first, then check it against the actual code before doing anything."**
+4. Point out anything that's changed since this README was last updated (e.g. "I also manually edited X" or "the last deploy failed and I haven't told anyone yet").
+
+Do **not** paste real secrets (Supabase keys, admin password, etc.) into a new chat. They live only in `.env.local` / Vercel's environment variables, never here.
+
+### Current state, at a glance
+
+| | |
+|---|---|
+| **Deployed at** | `https://family-fund-app-nine.vercel.app` |
+| **GitHub repo** | `github.com/danmusyokabness/family-fund-app` (private) |
+| **Supabase project** | The person's existing one (was already in use before this rebuild) |
+| **Steps completed** | 0 (plan approved) → 1 (foundation) → 2 (dates/phone/ledger engine) → 3 (login) → 4 (Setup + members) |
+| **Next step** | Step 5 (payments) |
+| **Test command** | `npm test` — should show `# pass 76` before Step 5 adds more |
+| **Build command** | `npm run build` |
+
+### Every file that exists in the project so far (by path)
+
+Delivered and confirmed working (Steps 1-4):
+```
+db/001_schema.sql
+db/002_add_member_admin.sql
+db/003_family_tree_links.sql
+.env.example
+.gitignore
+tsconfig.json
+package.json
+vercel.json
+lib/env.ts
+lib/supabase.ts
+lib/dates.ts
+lib/phone.ts
+lib/ledger.ts
+lib/session-token.ts
+lib/auth.ts
+lib/settings.ts
+lib/csv.ts
+lib/members-import.ts
+tests/dates.test.ts
+tests/phone.test.ts
+tests/ledger.test.ts
+tests/session-token.test.ts
+tests/settings.test.ts
+tests/csv.test.ts
+tests/members-import.test.ts
+app/layout.tsx
+app/globals.css
+app/page.tsx                      (member home — placeholder, real dashboard is Step 6)
+app/login/page.tsx
+app/admin/page.tsx                (admin home — links to Setup and Members)
+app/admin/login/page.tsx
+app/admin/setup/page.tsx
+app/admin/members/page.tsx
+app/api/health/route.ts
+app/api/auth/member-login/route.ts
+app/api/auth/admin-login/route.ts
+app/api/auth/logout/route.ts
+app/api/auth/me/route.ts
+app/api/admin/settings/route.ts
+app/api/admin/members/route.ts
+app/api/admin/members/[id]/route.ts
+app/api/admin/members/import/route.ts
+app/api/admin/reset-test-data/route.ts
+components/LogoutButton.tsx
+components/admin/SetupForm.tsx
+components/admin/MembersManager.tsx
+legacy/                           (old broken code, kept for reference only, not built)
+```
+A new chat should `view` these files directly rather than trust this list blindly — it's a snapshot as of Step 3, and can go stale.
+
+### Things a new chat must know that aren't obvious from the code alone
+
+- **Rule 16 (below) governs delivery style**: only new/changed files each step, not a full re-zip. If resuming, keep doing this.
+- **Real names, phone numbers, and amounts from the person's actual M-PESA statement and spreadsheet were analysed earlier** (see section 4) but were never pasted verbatim into this README or into any code/test file — tests use invented numbers. Don't ask the person to re-paste that data unless a specific new number is needed (e.g. a sample PDF for Step 7).
+- **This environment (the one writing this plan) can run TypeScript directly** via `node --test`, and has been using that to actually execute pure-logic code (dates/phone/ledger/session-token) before delivering it — not just writing it and hoping. Files that depend on Next.js's own runtime, a live database, or a browser can't be executed this way and are said so explicitly when delivered.
+- **A real deployment bug already happened once** (Step 1: the Supabase `anon` key was pasted into `SUPABASE_SERVICE_ROLE_KEY` by mistake, and RLS correctly refused every request as a result). Rule 15 exists because of it.
+
+---
+
+Status: **Steps 0-4 complete and verified. Continuing from Step 5.**
 This file is the single source of truth. It is updated at the end of every step.
 
 Changes from v3:
@@ -119,6 +207,9 @@ Things I checked:
 | D15 | Payments from an unregistered phone | **Phone first, then name.** A name-based match is only a **suggestion**: it goes to a **Needs confirmation** queue with the member pre-selected and is **not counted until you confirm**. Nothing usable goes to the **Unmatched** queue. Confirming can **remember that payer** for next time (on by default for a single-member confirmation, off for splits) |
 | D16 | Nothing hard-coded | The database ships **empty**. Fund name, Till number, target, FY start month, reminder/report days, message wording and members are all entered through the **Setup page**, so we can test the real setup flow |
 | D17 | Members without a phone | Can't log in or receive SMS; they're flagged for the admin. (Registration requires a primary phone, so this only happens if one is removed) |
+| D18 | Admin model | **Superadmin** = the original username/password login (env vars), unchanged. **Member-admin** = any member with `members.is_admin = true`, who gets full admin access just by logging in normally (name + phone) — no second password. Only the **superadmin** can grant or remove that flag; a member-admin can't create more admins |
+| D19 | Sort order for the ledger and member lists | **Eldest first**, by the linked family-tree node's `date_of_birth` (a real date, not the free-text `birthdate`). A member with no linked node, or a node with no `date_of_birth` yet, sorts **after** everyone with a known date, alphabetically by name among themselves. This can only improve as more birth dates are filled in via the family tree — it never blocks anything |
+| D20 | First login and the family tree | On a member's first login (or the first time they open the family tree, whichever comes first), if they have **no linked tree node yet**: if the admin already created one for them, they're shown it and asked to fill in any gaps; otherwise, they must **pick an existing node to connect to** (a parent is suggested first) so nobody is left floating unconnected. Either way, they can freely add or edit their own bio (birth date, spouse, career, etc.) beyond the required connection |
 
 ---
 
@@ -340,13 +431,15 @@ Each step ends with a **review gate**: I deliver complete files, tell you exactl
 - [x] **Step 1. Clean foundation. VERIFIED WORKING** (deployed on Vercel, `/api/health` returns `"ok": true` with a real 200 from Supabase). `db/001_schema.sql` (empty tables, no seed data), `.env.example`, `.gitignore` (fixed so `.env.example` stays committed while real `.env` files stay ignored), `lib/env.ts`, `lib/supabase.ts` (server-only), `package.json` cleanup, `vercel.json` (crons emptied out; the real cron is added in Step 9). Removed: the nested `family-fund-app.zip`, `.next`, `.env.local`, `server.js` (a custom server that isn't needed on Vercel and, worse, ran the **dev** script in production mode), and the stale `africastalking.d.ts` stub. All old route/page files moved to `legacy/` for reference, not built. Added a temporary placeholder homepage and an `/api/health` route so the build has something to compile and there's a one-click way to confirm the database connection works. Three real bugs were found and fixed while testing this step, in order: (1) `tsconfig.json` was checking the `legacy/` folder too, which broke the build on files that are intentionally not wired up — fixed by excluding `legacy` from the TypeScript build; (2) the health route's error handling assumed every thrown value was a JavaScript `Error`, but Supabase's own errors are plain objects, so real problems were being hidden as `"[object Object]"` — rewritten to talk to Supabase with a raw HTTP request so any failure shows a real status code and message; (3) the actual root cause: the `anon` key had been pasted into `SUPABASE_SERVICE_ROLE_KEY` in Vercel instead of the real `service_role` key, so RLS correctly refused every request — fixed by re-copying the correct key from Supabase and redeploying (changing an environment variable in Vercel does **not** take effect until the next deploy; that's worth remembering for future steps).
 - [x] **Step 2. Core logic with tests. VERIFIED — all 42 tests pass.** `lib/dates.ts` (Nairobi time with no timezone-database dependency, month arithmetic, FY helpers), `lib/phone.ts` (phone normalisation, plus `maskedPhoneMatches` for M-PESA's masked payer numbers), `lib/ledger.ts` (the FIFO engine, plus `groupMonthsByFY` and the `summarizeUnpaidMonths` wording used in the 7th reminder). `tests/dates.test.ts`, `tests/phone.test.ts`, `tests/ledger.test.ts` — 42 tests covering: a late joiner, an overpayment, a multi-month payment spilling into prepaid credit, a partial month, arrears carried across an FY boundary (with `groupMonthsByFY` checked on both FYs), a future joiner, and both real masked-phone formats from your actual statement (`254727***905` and `0740***425`). One real scenario was checked against your actual Master_Ledger screenshot by hand: joined August, 5 months paid at 300 each — the engine produces exactly the 1500 total your sheet shows. *How this was verified:* this environment's Node (v22) can run TypeScript directly, so I didn't just write these tests — I ran them for real and they passed (42/42), and I separately strict-mode type-checked the three library files with the actual TypeScript compiler (`noUnusedLocals`, `noUnusedParameters`, `strict` all on) with zero errors. Two real bugs were caught and fixed this way before delivery: a missing `.ts` extension on an internal import (Node's module loader requires it) and a TypeScript setting (`allowImportingTsExtensions`) needed to allow that extension — both fixed in `tsconfig.json`. What I could *not* verify here: the test files' own types depend on `@types/node` (already a devDependency), which isn't installed in my environment, so `npm test` on your machine is the first time they'll be checked with real type information rather than just executed. `package.json` gained a `test` script; `tsconfig.json` now excludes `tests/` from the app build (tests run separately, not bundled into the site) and allows the `.ts` extension Node's test runner needs. *Test:* run `npm test` — you should see `# pass 42` and `# fail 0`. Then run `npm run build` again to confirm nothing broke.
 - [x] **Step 3. Login. Delivered — new/changed files only, per rule 16.** `lib/session-token.ts` (pure signing/verification, HMAC-SHA256, no dependencies — **7/7 tests run for real, passing**), `lib/auth.ts` (cookie sessions, `requireMember()`/`requireAdmin()` guards, login throttling: 5 failed attempts locks for 15 minutes per the plan), `app/api/auth/member-login/route.ts` (name + any registered phone, generic error either way something's wrong, so a wrong guess doesn't reveal which part failed), `app/api/auth/admin-login/route.ts` (constant-time password comparison), `app/api/auth/logout/route.ts`, `app/api/auth/me/route.ts`, `components/LogoutButton.tsx`, `app/login/page.tsx`, `app/admin/login/page.tsx`, `app/admin/page.tsx` (new, guarded placeholder), `app/page.tsx` (**changed** — now redirects to `/login` if not logged in), `package.json` (**changed** — test script now includes `session-token.test.ts`). *What was actually verified:* the pure token logic was executed for real (49/49 tests pass project-wide now) and every new/changed file passed a syntax check. The cookie handling, database-backed throttle, and page guards depend on the Next.js/Vercel runtime and a live database, which this environment can't run — so unlike Step 2, these specific files are verified by your own test below, not by me in advance. *Test:* after deploying, visiting `/` while logged out should redirect to `/login`; visiting `/admin` while logged out should redirect to `/admin/login`; logging in as a real member (name + their registered phone from `member_phones` — none exist yet, so this will correctly fail until Step 4 adds real members, which is expected) and as admin (your `ADMIN_USERNAME`/`ADMIN_PASSWORD`) should each work and redirect correctly; typing 5 wrong admin passwords in a row should get a "too many attempts" message on the 6th. Run `npm test` (expect `# pass 49`) and `npm run build`.
-- [ ] **Step 4. Setup and members.** The **Setup page** (fund name, Till, target, FY start, reminder/report days, message wording with preview), **bulk member import** from your Member_Mapping sheet (CSV) with preview, add/edit/deactivate members, primary and alternate phones, masked and business-number identifiers, a "clear test data" action with typed confirmation so we can repeat the setup while testing. *Test:* run Setup from scratch, import members, log in as one.
+- [x] **Step 4. Setup and members. Delivered — new/changed files only.** `lib/settings.ts` (the settings schema/defaults/validation — the ONE place that knows which settings exist; drives both the API and the Setup form's fields directly, so they can't drift apart), `lib/csv.ts` + `lib/members-import.ts` (CSV parsing and member-row validation — reused as-is by the Step 7 statement importer), `app/api/admin/settings/route.ts`, `app/api/admin/members/route.ts` (list/create), `app/api/admin/members/[id]/route.ts` (edit/deactivate — no delete route, deactivate only, per rule 9), `app/api/admin/members/import/route.ts` (preview by default, only writes with an explicit `commit: true`), `app/api/admin/reset-test-data/route.ts` (typed-confirmation wipe of members/payments/logs only — settings and the family tree are untouched), `app/admin/setup/page.tsx` + `components/admin/SetupForm.tsx`, `app/admin/members/page.tsx` + `components/admin/MembersManager.tsx` (list, add, inline edit, deactivate/reactivate, CSV import with a preview showing every row's warnings/errors before anything is saved, and the reset-test-data control). **Changed:** `app/admin/page.tsx` (now links to Setup and Members instead of being a bare placeholder), `package.json` (test script extended). *What was actually run:* the three pure logic pieces (`settings.ts`, `csv.ts`, `members-import.ts`) were executed for real — **76/76 tests passing project-wide now** — including the CSV parser handling quoted fields and CRLF line endings, and the member importer correctly classifying a business/shortcode number vs. an alternate phone vs. unrecognisable text in extra columns (modelled on your real Member_Mapping sheet's shape, using invented names). *What wasn't run here:* the API routes and admin pages depend on a live database and the Next.js/browser runtime, same limitation as Step 3 — every new/changed file did pass a syntax check, but your own test below is what actually proves them. *Test:* deploy, go to `/admin/setup`, fill in your real Till/target/FY details and save; go to `/admin/members`, add one member by hand and confirm you can then log in as them at `/login`; try the CSV import with a few fake rows first (never real data) and check the preview looks right before committing; run `npm test` (expect `# pass 76`) and `npm run build`. **Confirmed working via the person's own local `npm run build` and `npm test` (76/76) — three real bugs found this way and fixed, exactly the risk flagged above:** (1) two page files (`setup-page.tsx`, `members-page.tsx`) had been placed under `app/api/admin/...` instead of `app/admin/...`, which Next.js correctly refused to build as a route/page conflict — moved to the right folders; (2) `lib/auth.ts` passed specific TypeScript interfaces where a `Record<string, unknown>` was expected, which fails under `strict` mode even though it works at runtime — fixed by loosening `createSessionToken`'s parameter type and simplifying the `GuardResult` generic; (3) the biggest one: Next.js tried to statically pre-build `/`, `/admin`, `/admin/setup` and `/admin/members` at deploy time, before any real visitor or login cookie exists — which is also a genuine correctness risk, not just a build failure, since a statically cached admin page could in principle be served to the wrong person. Fixed by adding `export const dynamic = "force-dynamic";` to all four pages, confirmed by the build's own route table now showing all of them as `ƒ (Dynamic)`.
+
+**Addendum, same step, in response to follow-up requests:** (a) **member-as-admin (D18):** `db/002_add_member_admin.sql` adds `members.is_admin`; `lib/auth.ts` gained `getSuperAdminSession()` (the original env-var login only), `getAdminContext()`/`requireSuperAdmin()`, and `getAdminSession()`/`requireAdmin()` now mean "superadmin OR member-admin" — every existing call site kept working unchanged since the function names and shapes didn't change, only what counts as "admin" under the hood; `app/api/admin/members/[id]/route.ts` accepts an `isAdmin` field gated by `requireSuperAdmin()` specifically; `app/api/auth/me/route.ts` now also reports `isSuperAdmin`; `MembersManager.tsx` shows an "Admin" badge and a make/remove-admin control visible only to the superadmin. (b) **Site URL auto-suggestion:** `app/api/admin/settings/route.ts` now suggests Vercel's own production URL as a starting value when `site_url` has never been saved, still fully editable. (c) **Schema groundwork for D19/D20 (ledger sort order and the first-login family-tree flow), built now but not consumed until Steps 6 and 10:** `db/003_family_tree_links.sql` adds `family_nodes.member_id` (links a tree node to a member account) and `family_nodes.date_of_birth` (a real `date` column for sorting — the existing `birthdate` is free text and can't be sorted safely, so it's kept as-is for partial/approximate dates and `date_of_birth` is the new source of truth when a precise date is known).
 - [ ] **Step 5. Payments.** Manual payment form, adjustments, the **Needs confirmation** and **Unmatched** queues (name-based suggestions pre-selected, nothing counted until confirmed), manual split/reassign, remembered payers, fund expenses, paginated data helper. *Test:* record, split and reassign payments, watch balances change.
-- [ ] **Step 6. Member dashboard.** The five items in section 2, auto FY selector, arrears highlighting. *Test:* compare against your Master_Ledger.
+- [ ] **Step 6. Member dashboard.** The five items in section 2, auto FY selector, arrears highlighting, **members sorted eldest-first per D19** (using the family tree link added in `db/003`, since that's when the data needed for it first exists). *Test:* compare against your Master_Ledger.
 - [ ] **Step 7. Statement upload and starting data.** PDF converter in the browser (decrypt, extract, integrity check), CSV importer as fallback, preview and reconciliation, then load your history and **compare every member's totals with your Master_Ledger**, reproducing your manual splits. *Test:* upload your real statement PDF, confirm the integrity check passes and the app's balance equals the reported KES 12,064.86 and each member matches your sheet; import it again and confirm nothing doubles; confirm a name-only match lands in Needs confirmation and doesn't count until confirmed.
 - [ ] **Step 8. SMS and messages.** Africa's Talking setup walkthrough, `lib/sms.ts`, 7th reminder and 15th report composers, dry-run preview page, WhatsApp-links list, `sms_log`. *Test:* preview exactly who gets what, and check every amount by hand.
 - [ ] **Step 9. Scheduler.** `/api/cron/daily`, keep-alive, catch-up windows, "Run now" buttons, health panel. *Test:* trigger manually; confirm `job_runs` entries.
-- [ ] **Step 10. Message board and family tree.** Real private messages (admin-only), fixed column names, open editing of the tree with history and undo. *Test:* edit the tree as two different members; restore a change.
+- [ ] **Step 10. Message board and family tree.** Real private messages (admin-only), fixed column names, open editing of the tree with history and undo. **First-login/first-tree-visit flow (D20):** a member with no linked node is shown the admin's existing node for them to complete if one exists, or must pick an existing node (parent suggested first) to connect to before continuing — never left floating. Free-form bio fields (birth date, spouse, career, etc.) beyond that are always optional and editable later. *Test:* edit the tree as two different members; restore a change; log in as a brand-new member and confirm the connect-or-complete prompt appears exactly once and can't be skipped into a floating node.
 - [ ] **Step 11. Daraja live intake** (when you have access). Docs check, URL registration walkthrough, confirmation endpoint, matching through the same learned-payer logic. *Test:* a real small test payment appears in the app within seconds.
 - [ ] **Step 12. Hardening and go-live.** Rotate all keys, confirm RLS blocks the anon key, export button, Vercel env setup, smoke test, then switch `SMS_LIVE=true`.
 
@@ -370,6 +463,7 @@ Each step ends with a **review gate**: I deliver complete files, tell you exactl
 14. **Old tools are retired only after the replacement is proven** on your real data (for example the Colab notebook).
 15. **After changing an environment variable in Vercel, redeploy before testing.** The change doesn't apply to what's already running until the next deploy.
 16. **Only the new or changed files are delivered at each step** — not the whole project re-zipped. Files that haven't changed aren't re-tested or re-explained. Keep things lean so we cover more ground before running into any limits.
+17. **Every command — including git commands — goes in its own copyable code block**, never written inline in a sentence.
 
 *(Add new rules here as they come up.)*
 

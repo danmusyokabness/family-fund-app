@@ -25,7 +25,7 @@ export async function GET() {
   const { data, error } = await db
     .from("members")
     .select(
-      "id, full_name, joined_on, is_active, notes, created_at, " +
+      "id, full_name, joined_on, is_active, is_admin, notes, created_at, " +
         "member_phones(id, phone_number, is_primary), " +
         "payer_aliases(id, alias_type, alias_value)"
     )

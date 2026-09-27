@@ -18,6 +18,7 @@ interface Member {
   full_name: string;
   joined_on: string;
   is_active: boolean;
+  is_admin: boolean;
   notes: string | null;
   member_phones: MemberPhone[];
   payer_aliases: MemberAlias[];
@@ -58,6 +59,8 @@ export default function MembersManager() {
   const [members, setMembers] = useState<Member[]>([]);
   const [loadingMembers, setLoadingMembers] = useState(true);
   const [membersError, setMembersError] = useState<string | null>(null);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [togglingAdminId, setTogglingAdminId] = useState<string | null>(null);
 
   // ---- Add member form ----
   const [newName, setNewName] = useState("");
@@ -108,8 +111,26 @@ export default function MembersManager() {
     }
   }
 
+  async function toggleMemberAdmin(member: Member) {
+    setTogglingAdminId(member.id);
+    try {
+      await fetch(`/api/admin/members/${member.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isAdmin: !member.is_admin }),
+      });
+      await loadMembers();
+    } finally {
+      setTogglingAdminId(null);
+    }
+  }
+
   useEffect(() => {
     loadMembers();
+    fetch("/api/auth/me")
+      .then((res) => res.json())
+      .then((data) => setIsSuperAdmin(Boolean(data.isSuperAdmin)))
+      .catch(() => setIsSuperAdmin(false));
   }, []);
 
   async function handleAddSubmit(e: React.FormEvent) {
@@ -339,6 +360,11 @@ export default function MembersManager() {
                   <div>
                     <p className={`font-medium ${member.is_active ? "text-slate-800" : "text-slate-400 line-through"}`}>
                       {member.full_name}
+                      {member.is_admin && (
+                        <span className="ml-2 rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-normal text-white align-middle">
+                          Admin
+                        </span>
+                      )}
                     </p>
                     <p className="text-xs text-slate-500">
                       Joined {monthKeyFromDateString(member.joined_on)} &middot;{" "}
@@ -354,6 +380,19 @@ export default function MembersManager() {
                     <button onClick={() => toggleActive(member)} className="text-slate-600 underline">
                       {member.is_active ? "Deactivate" : "Reactivate"}
                     </button>
+                    {isSuperAdmin && (
+                      <button
+                        onClick={() => toggleMemberAdmin(member)}
+                        disabled={togglingAdminId === member.id}
+                        className="text-slate-600 underline disabled:opacity-60"
+                      >
+                        {togglingAdminId === member.id
+                          ? "..."
+                          : member.is_admin
+                            ? "Remove admin"
+                            : "Make admin"}
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
