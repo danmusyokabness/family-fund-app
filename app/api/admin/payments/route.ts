@@ -25,6 +25,30 @@ import { loadMembersForMatching } from "@/lib/load-members-for-matching";
 const VALID_STATUSES = ["matched", "needs_confirmation", "unmatched", "ignored"];
 const VALID_KINDS = ["manual", "adjustment", "opening"];
 
+// The shape of one row returned by the list query below. Written out by
+// hand because Supabase can't work out a joined (nested) query's type by
+// itself — without this, every field access is a type error.
+interface PaymentRow {
+  id: string;
+  amount: number;
+  kind: string;
+  source: string;
+  mpesa_receipt: string | null;
+  payer_name: string | null;
+  payer_phone_masked: string | null;
+  payer_ref: string | null;
+  paid_at: string;
+  match_status: string;
+  suggested_member_id: string | null;
+  suggestion_reason: string | null;
+  note: string | null;
+  created_at: string;
+  payment_allocations: { id: string; member_id: string; amount: number; members: { full_name: string } | null }[];
+}
+
+const PAYMENT_COLUMNS =
+  "id, amount, kind, source, mpesa_receipt, payer_name, payer_phone_masked, payer_ref, paid_at, match_status, suggested_member_id, suggestion_reason, note, created_at, payment_allocations(id, member_id, amount, members(full_name))";
+
 export async function GET(req: NextRequest) {
   const auth = await requireAdmin();
   if (!auth.ok) return auth.response;
@@ -37,11 +61,7 @@ export async function GET(req: NextRequest) {
   const db = supabaseAdmin();
   let query = db
     .from("payments")
-    .select(
-      "id, amount, kind, source, mpesa_receipt, payer_name, payer_phone_masked, payer_ref, paid_at, " +
-        "match_status, suggested_member_id, suggestion_reason, note, created_at, " +
-        "payment_allocations(id, member_id, amount, members(full_name))"
-    )
+    .select(PAYMENT_COLUMNS)
     .order("paid_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
@@ -49,29 +69,29 @@ export async function GET(req: NextRequest) {
     query = query.eq("match_status", status);
   }
 
-  const { data: payments, error } = await query;
+  const { data, error } = await query.returns<PaymentRow[]>();
   if (error) {
     return NextResponse.json({ error: "Could not load payments." }, { status: 500 });
   }
+  const payments: PaymentRow[] = data ?? [];
 
   // Only bother recomputing candidates for the "unmatched" rows actually
   // being returned on this page — cheap at this scale, pointless otherwise.
-  const unmatchedRows = (payments ?? []).filter((p) => p.match_status === "unmatched");
+  const unmatchedRows = payments.filter((p) => p.match_status === "unmatched");
   let candidatesByPaymentId: Record<string, { memberId: string; reason: string }[]> = {};
   if (unmatchedRows.length > 0) {
     const members = await loadMembersForMatching();
-    candidatesByPaymentId = Object.fromEntries(
-      unmatchedRows.map((p) => {
-        const outcome = matchPayment(
-          { payerPhoneMasked: p.payer_phone_masked, payerName: p.payer_name, payerRef: p.payer_ref },
-          members
-        );
-        return [p.id, outcome.status === "unmatched" ? outcome.candidates : []];
-      })
-    );
+    const entries: [string, { memberId: string; reason: string }[]][] = unmatchedRows.map((p) => {
+      const outcome = matchPayment(
+        { payerPhoneMasked: p.payer_phone_masked, payerName: p.payer_name, payerRef: p.payer_ref },
+        members
+      );
+      return [p.id, outcome.status === "unmatched" ? outcome.candidates : []];
+    });
+    candidatesByPaymentId = Object.fromEntries(entries);
   }
 
-  const withCandidates = (payments ?? []).map((p) => ({
+  const withCandidates = payments.map((p) => ({
     ...p,
     candidates: candidatesByPaymentId[p.id] ?? undefined,
   }));
