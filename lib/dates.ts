@@ -39,6 +39,22 @@ export function nairobiTodayDateString(): string {
   return `${y}-${m}-${day}`;
 }
 
+/**
+ * The month a timestamp falls in, as seen in Nairobi. Payment times are
+ * stored in UTC, so a payment made at 1am on 1 September Nairobi time is
+ * stored as 10pm on 31 August UTC — reading the month straight off the
+ * stored value would file it under the wrong month. Kenya is a fixed
+ * UTC+3 with no daylight saving, so shifting by 3 hours is exact.
+ */
+export function monthKeyFromInstant(isoTimestamp: string): MonthKey {
+  const instant = new Date(isoTimestamp);
+  if (Number.isNaN(instant.getTime())) {
+    throw new Error(`Invalid timestamp: "${isoTimestamp}"`);
+  }
+  const nairobi = new Date(instant.getTime() + NAIROBI_OFFSET_MS);
+  return formatMonthKey(nairobi.getUTCFullYear(), nairobi.getUTCMonth() + 1);
+}
+
 export function formatMonthKey(year: number, month: number): MonthKey {
   if (month < 1 || month > 12) {
     throw new Error(`Invalid month number: ${month}`);

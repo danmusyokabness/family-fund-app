@@ -10,6 +10,7 @@ import {
   formatMonthShort,
   formatMonthYear,
   fyRangeForMonth,
+  monthKeyFromInstant,
 } from "../lib/dates.ts";
 
 test("formatMonthKey pads the month", () => {
@@ -111,4 +112,20 @@ test("fyRangeForMonth respects a custom FY start month", () => {
   assert.equal(fy.label, "FY 2026/2026");
   assert.equal(fy.startMonth, "2026-01");
   assert.equal(fy.endMonth, "2026-12");
+});
+
+test("monthKeyFromInstant reads the month in Nairobi time, not UTC", () => {
+  // 10pm UTC on 31 Aug is 1am on 1 Sep in Nairobi (UTC+3): September.
+  assert.equal(monthKeyFromInstant("2026-08-31T22:00:00Z"), "2026-09");
+  // 8pm UTC on 31 Aug is 11pm on 31 Aug in Nairobi: still August.
+  assert.equal(monthKeyFromInstant("2026-08-31T20:00:00Z"), "2026-08");
+});
+
+test("monthKeyFromInstant handles Postgres-style timestamps and a year boundary", () => {
+  assert.equal(monthKeyFromInstant("2026-09-28T09:15:00+00:00"), "2026-09");
+  assert.equal(monthKeyFromInstant("2026-12-31T21:30:00+00:00"), "2027-01");
+});
+
+test("monthKeyFromInstant rejects a garbage timestamp", () => {
+  assert.throws(() => monthKeyFromInstant("not a date"));
 });
