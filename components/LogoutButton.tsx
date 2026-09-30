@@ -35,7 +35,7 @@ export default function LogoutButton({
     <button
       onClick={handleLogout}
       disabled={loading}
-      className="text-sm text-slate-500 underline hover:text-slate-700 disabled:opacity-60"
+      className="text-sm text-ink-soft underline hover:text-brass disabled:opacity-60"
     >
       {loading ? "Logging out..." : label}
     </button>

@@ -40,23 +40,21 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center bg-slate-50 px-4 font-sans">
-      <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-4 rounded-xl bg-white p-6 shadow">
+    <main className="flex min-h-screen items-center justify-center px-4">
+      <form onSubmit={handleSubmit} className="paper-card w-full max-w-sm space-y-4 p-7">
         <div>
-          <h1 className="text-xl font-bold text-slate-800">Family Emergency Fund</h1>
-          <p className="mt-1 text-sm text-slate-500">Log in with your name and phone number.</p>
+          <h1 className="font-serif text-2xl font-semibold">Family Emergency Fund</h1>
+          <p className="mt-1 text-sm text-ink-soft">Log in with your name and phone number.</p>
         </div>
 
         <div>
-          <label htmlFor="fullName" className="mb-1 block text-sm font-medium text-slate-700">
-            Full name
-          </label>
+          <label htmlFor="fullName" className="mb-1 block text-sm font-medium text-ink">Full name</label>
           <input
             id="fullName"
             type="text"
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-slate-800"
+            className="w-full px-3 py-2"
             placeholder="e.g. Esther Nakhanu"
             autoComplete="name"
             required
@@ -64,33 +62,27 @@ export default function LoginPage() {
         </div>
 
         <div>
-          <label htmlFor="phone" className="mb-1 block text-sm font-medium text-slate-700">
-            Phone number
-          </label>
+          <label htmlFor="phone" className="mb-1 block text-sm font-medium text-ink">Phone number</label>
           <input
             id="phone"
             type="tel"
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-slate-800"
+            className="w-full px-3 py-2"
             placeholder="07XXXXXXXX"
             autoComplete="tel"
             required
           />
         </div>
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error && <p className="text-sm text-danger">{error}</p>}
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full rounded-md bg-slate-800 py-2 font-medium text-white disabled:opacity-60"
-        >
+        <button type="submit" disabled={loading} className="btn-primary w-full py-2">
           {loading ? "Logging in..." : "Log in"}
         </button>
 
-        <p className="text-center text-xs text-slate-400">
-          Are you the admin? <a href="/admin/login" className="underline">Admin login</a>
+        <p className="text-center text-xs text-ink-soft">
+          Are you the admin? <a href="/admin/login" className="link">Admin login</a>
         </p>
       </form>
     </main>

@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { getAdminSession } from "@/lib/auth";
 import LogoutButton from "@/components/LogoutButton";
+import AdminShell from "@/components/admin/AdminShell";
 
 export const dynamic = "force-dynamic";
 
@@ -11,24 +12,21 @@ export default async function AdminHome() {
   if (!isAdmin) redirect("/admin/login");
 
   return (
-    <main className="min-h-screen bg-slate-50 px-4 py-10 font-sans">
-      <div className="mx-auto max-w-md space-y-4 rounded-xl bg-white p-6 shadow">
-        <h1 className="text-xl font-bold text-slate-800">Admin</h1>
-        <div className="space-y-2">
-          <a href="/admin/setup" className="block rounded-md border border-slate-200 px-4 py-3 hover:bg-slate-50">
-            <span className="font-medium text-slate-800">Setup</span>
-            <p className="text-sm text-slate-500">Fund name, Till, target, reminder days, message wording.</p>
-          </a>
-          <a href="/admin/members" className="block rounded-md border border-slate-200 px-4 py-3 hover:bg-slate-50">
-            <span className="font-medium text-slate-800">Members</span>
-            <p className="text-sm text-slate-500">Add, edit, deactivate, or bulk-import members.</p>
-          </a>
-          <a href="/admin/payments" className="block rounded-md border border-slate-200 px-4 py-3 hover:bg-slate-50">
-            <span className="font-medium text-slate-800">Payments</span>
-            <p className="text-sm text-slate-500">Record, confirm, split, or reassign payments; fund expenses.</p>
-          </a>
+    <main className="min-h-screen">
+      <header className="border-b border-line bg-surface">
+        <div className="mx-auto flex max-w-screen-2xl items-center justify-between px-4 py-3 sm:px-6">
+          <div>
+            <p className="font-serif text-lg font-semibold">Family Emergency Fund</p>
+            <p className="text-xs text-ink-soft">Admin</p>
+          </div>
+          <div className="flex items-center gap-4 text-sm">
+            <a href="/" className="link">Dashboard</a>
+            <LogoutButton type="admin" />
+          </div>
         </div>
-        <LogoutButton type="admin" />
+      </header>
+      <div className="mx-auto max-w-screen-2xl px-4 py-6 sm:px-6">
+        <AdminShell />
       </div>
     </main>
   );

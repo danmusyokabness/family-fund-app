@@ -1,7 +1,7 @@
 "use client";
 // components/admin/MembersManager.tsx
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface MemberPhone {
   id: string;
@@ -45,15 +45,14 @@ interface CommitResult {
 }
 
 function splitList(input: string): string[] {
-  return input
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  return input.split(",").map((s) => s.trim()).filter(Boolean);
 }
-
 function monthKeyFromDateString(dateStr: string): string {
   return dateStr.slice(0, 7);
 }
+
+const inputCls = "rounded-md px-2.5 py-1.5 text-sm";
+const fieldLabel = "mb-1 block text-xs font-medium text-ink-soft";
 
 export default function MembersManager() {
   const [members, setMembers] = useState<Member[]>([]);
@@ -62,7 +61,8 @@ export default function MembersManager() {
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [togglingAdminId, setTogglingAdminId] = useState<string | null>(null);
 
-  // ---- Add member form ----
+  // ---- Add member (collapsed by default) ----
+  const [showAddForm, setShowAddForm] = useState(false);
   const [newName, setNewName] = useState("");
   const [newJoinedOn, setNewJoinedOn] = useState("");
   const [newPrimaryPhone, setNewPrimaryPhone] = useState("");
@@ -81,14 +81,18 @@ export default function MembersManager() {
   const [editError, setEditError] = useState<string | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
 
-  // ---- CSV import ----
+  // ---- CSV import (collapsed by default) ----
+  const [showImport, setShowImport] = useState(false);
   const [csvText, setCsvText] = useState("");
+  const [csvFileName, setCsvFileName] = useState<string | null>(null);
+  const [showPasteInstead, setShowPasteInstead] = useState(false);
   const [defaultJoinedOn, setDefaultJoinedOn] = useState("");
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [commitResult, setCommitResult] = useState<CommitResult | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ---- Reset test data ----
   const [confirmText, setConfirmText] = useState("");
@@ -156,6 +160,7 @@ export default function MembersManager() {
       setNewPrimaryPhone("");
       setNewAlternatePhones("");
       setNewShortcodes("");
+      setShowAddForm(false);
       await loadMembers();
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Could not add member.");
@@ -172,12 +177,7 @@ export default function MembersManager() {
     const alternates = member.member_phones.filter((p) => !p.is_primary);
     setEditPrimaryPhone(primary?.phone_number ?? "");
     setEditAlternatePhones(alternates.map((p) => p.phone_number).join(", "));
-    setEditShortcodes(
-      member.payer_aliases
-        .filter((a) => a.alias_type === "shortcode")
-        .map((a) => a.alias_value)
-        .join(", ")
-    );
+    setEditShortcodes(member.payer_aliases.filter((a) => a.alias_type === "shortcode").map((a) => a.alias_value).join(", "));
     setEditError(null);
   }
 
@@ -218,6 +218,15 @@ export default function MembersManager() {
     await loadMembers();
   }
 
+  function handleFileChosen(file: File) {
+    setCsvFileName(file.name);
+    setPreview(null);
+    setCommitResult(null);
+    const reader = new FileReader();
+    reader.onload = () => setCsvText(String(reader.result ?? ""));
+    reader.readAsText(file);
+  }
+
   async function handlePreview() {
     setPreviewing(true);
     setImportError(null);
@@ -256,6 +265,8 @@ export default function MembersManager() {
       setCommitResult(data);
       setPreview(null);
       setCsvText("");
+      setCsvFileName(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
       await loadMembers();
     } catch (err) {
       setImportError(err instanceof Error ? err.message : "Import failed.");
@@ -288,268 +299,195 @@ export default function MembersManager() {
   }
 
   return (
-    <div className="space-y-8">
-      {/* ---- Member list ---- */}
-      <section className="rounded-xl bg-white p-6 shadow">
-        <h2 className="mb-3 text-lg font-semibold text-slate-800">
-          Members {members.length > 0 && <span className="text-sm font-normal text-slate-400">({members.length})</span>}
+    <div className="space-y-6">
+      {/* ---- Action bar ---- */}
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="mr-auto font-serif text-lg font-semibold">
+          Members <span className="text-sm font-normal text-ink-soft">({members.length})</span>
         </h2>
+        <button onClick={() => setShowImport((v) => !v)} className="btn-secondary px-3 py-1.5 text-sm">
+          Import CSV
+        </button>
+        <button onClick={() => setShowAddForm((v) => !v)} className="btn-primary px-3 py-1.5 text-sm">
+          {showAddForm ? "Cancel" : "+ Add member"}
+        </button>
+      </div>
 
-        {loadingMembers && <p className="text-sm text-slate-500">Loading...</p>}
-        {membersError && <p className="text-sm text-red-600">{membersError}</p>}
-
-        {!loadingMembers && members.length === 0 && (
-          <p className="text-sm text-slate-500">No members yet — add one below or import a CSV.</p>
-        )}
-
-        <ul className="divide-y divide-slate-100">
-          {members.map((member) => (
-            <li key={member.id} className="py-3">
-              {editingId === member.id ? (
-                <form onSubmit={handleEditSubmit} className="space-y-2 rounded-md bg-slate-50 p-3">
-                  <input
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                    placeholder="Full name"
-                  />
-                  <input
-                    type="month"
-                    value={editJoinedOn}
-                    onChange={(e) => setEditJoinedOn(e.target.value)}
-                    className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                  />
-                  <input
-                    value={editPrimaryPhone}
-                    onChange={(e) => setEditPrimaryPhone(e.target.value)}
-                    className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                    placeholder="Primary phone"
-                  />
-                  <input
-                    value={editAlternatePhones}
-                    onChange={(e) => setEditAlternatePhones(e.target.value)}
-                    className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                    placeholder="Alternate phones, comma separated"
-                  />
-                  <input
-                    value={editShortcodes}
-                    onChange={(e) => setEditShortcodes(e.target.value)}
-                    className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                    placeholder="Business/shortcode numbers, comma separated"
-                  />
-                  {editError && <p className="text-xs text-red-600">{editError}</p>}
-                  <div className="flex gap-2">
-                    <button
-                      type="submit"
-                      disabled={savingEdit}
-                      className="rounded bg-slate-800 px-3 py-1 text-xs font-medium text-white disabled:opacity-60"
-                    >
-                      {savingEdit ? "Saving..." : "Save"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setEditingId(null)}
-                      className="rounded border border-slate-300 px-3 py-1 text-xs text-slate-600"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </form>
-              ) : (
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className={`font-medium ${member.is_active ? "text-slate-800" : "text-slate-400 line-through"}`}>
-                      {member.full_name}
-                      {member.is_admin && (
-                        <span className="ml-2 rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-normal text-white align-middle">
-                          Admin
-                        </span>
-                      )}
-                    </p>
-                    <p className="text-xs text-slate-500">
-                      Joined {monthKeyFromDateString(member.joined_on)} &middot;{" "}
-                      {member.member_phones.find((p) => p.is_primary)?.phone_number ?? "no primary phone"}
-                      {member.member_phones.filter((p) => !p.is_primary).length > 0 &&
-                        ` (+${member.member_phones.filter((p) => !p.is_primary).length} alt)`}
-                    </p>
-                  </div>
-                  <div className="flex gap-3 text-xs">
-                    <button onClick={() => startEdit(member)} className="text-slate-600 underline">
-                      Edit
-                    </button>
-                    <button onClick={() => toggleActive(member)} className="text-slate-600 underline">
-                      {member.is_active ? "Deactivate" : "Reactivate"}
-                    </button>
-                    {isSuperAdmin && (
-                      <button
-                        onClick={() => toggleMemberAdmin(member)}
-                        disabled={togglingAdminId === member.id}
-                        className="text-slate-600 underline disabled:opacity-60"
-                      >
-                        {togglingAdminId === member.id
-                          ? "..."
-                          : member.is_admin
-                            ? "Remove admin"
-                            : "Make admin"}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      {/* ---- Add member ---- */}
-      <section className="rounded-xl bg-white p-6 shadow">
-        <h2 className="mb-3 text-lg font-semibold text-slate-800">Add a member</h2>
-        <form onSubmit={handleAddSubmit} className="grid gap-2 sm:grid-cols-2">
-          <input
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            placeholder="Full name"
-            className="rounded border border-slate-300 px-2 py-1.5 text-sm sm:col-span-2"
-            required
-          />
-          <input
-            type="month"
-            value={newJoinedOn}
-            onChange={(e) => setNewJoinedOn(e.target.value)}
-            className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-            required
-          />
-          <input
-            value={newPrimaryPhone}
-            onChange={(e) => setNewPrimaryPhone(e.target.value)}
-            placeholder="Primary phone (07...)"
-            className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-            required
-          />
-          <input
-            value={newAlternatePhones}
-            onChange={(e) => setNewAlternatePhones(e.target.value)}
-            placeholder="Alternate phones, comma separated"
-            className="rounded border border-slate-300 px-2 py-1.5 text-sm sm:col-span-2"
-          />
-          <input
-            value={newShortcodes}
-            onChange={(e) => setNewShortcodes(e.target.value)}
-            placeholder="Business/shortcode numbers, comma separated"
-            className="rounded border border-slate-300 px-2 py-1.5 text-sm sm:col-span-2"
-          />
-          {addError && <p className="text-xs text-red-600 sm:col-span-2">{addError}</p>}
-          <button
-            type="submit"
-            disabled={adding}
-            className="rounded bg-slate-800 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-60 sm:col-span-2 sm:w-fit"
-          >
+      {/* ---- Add member (expands on click) ---- */}
+      {showAddForm && (
+        <form onSubmit={handleAddSubmit} className="paper-card grid gap-2 p-4 sm:grid-cols-2">
+          <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Full name" className={`${inputCls} sm:col-span-2`} required />
+          <div>
+            <label className={fieldLabel}>Joining month</label>
+            <input type="month" value={newJoinedOn} onChange={(e) => setNewJoinedOn(e.target.value)} className={`${inputCls} w-full`} required />
+          </div>
+          <div>
+            <label className={fieldLabel}>Primary phone</label>
+            <input value={newPrimaryPhone} onChange={(e) => setNewPrimaryPhone(e.target.value)} placeholder="07..." className={`${inputCls} w-full`} required />
+          </div>
+          <input value={newAlternatePhones} onChange={(e) => setNewAlternatePhones(e.target.value)} placeholder="Alternate phones, comma separated" className={`${inputCls} sm:col-span-2`} />
+          <input value={newShortcodes} onChange={(e) => setNewShortcodes(e.target.value)} placeholder="Business/shortcode numbers, comma separated" className={`${inputCls} sm:col-span-2`} />
+          {addError && <p className="text-xs text-danger sm:col-span-2">{addError}</p>}
+          <button type="submit" disabled={adding} className="btn-primary px-4 py-1.5 text-sm sm:col-span-2 sm:w-fit">
             {adding ? "Adding..." : "Add member"}
           </button>
         </form>
-      </section>
+      )}
 
-      {/* ---- CSV import ---- */}
-      <section className="rounded-xl bg-white p-6 shadow">
-        <h2 className="mb-1 text-lg font-semibold text-slate-800">Bulk import from CSV</h2>
-        <p className="mb-3 text-xs text-slate-500">
-          Paste a CSV with a name column and a primary phone column (other columns are read as alternate
-          phones or business numbers automatically). Nothing is saved until you confirm the import.
-        </p>
-        <textarea
-          value={csvText}
-          onChange={(e) => {
-            setCsvText(e.target.value);
-            setPreview(null);
-            setCommitResult(null);
-          }}
-          rows={6}
-          className="w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-xs"
-          placeholder="Primary Member Name,Primary Phone Number,Alternate Payment Phone&#10;Jane Mwangi,0712345678,"
-        />
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <button
-            onClick={handlePreview}
-            disabled={previewing || !csvText.trim()}
-            className="rounded border border-slate-300 px-3 py-1.5 text-sm text-slate-700 disabled:opacity-60"
-          >
-            {previewing ? "Reading..." : "Preview"}
-          </button>
+      {/* ---- CSV import (expands on click) ---- */}
+      {showImport && (
+        <div className="paper-card space-y-3 p-4">
+          <p className="text-sm text-ink-soft">
+            Upload a CSV with a name column and a primary phone column. Other columns are read as alternate
+            phones or business numbers automatically. Nothing is saved until you confirm.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              onChange={(e) => e.target.files?.[0] && handleFileChosen(e.target.files[0])}
+              className="text-sm"
+            />
+            {csvFileName && <span className="text-xs text-ink-soft">{csvFileName}</span>}
+            <button onClick={() => setShowPasteInstead((v) => !v)} className="ml-auto text-xs link">
+              {showPasteInstead ? "Hide paste option" : "Or paste CSV text"}
+            </button>
+          </div>
+          {showPasteInstead && (
+            <textarea
+              value={csvText}
+              onChange={(e) => {
+                setCsvText(e.target.value);
+                setCsvFileName(null);
+                setPreview(null);
+                setCommitResult(null);
+              }}
+              rows={5}
+              className={`${inputCls} w-full font-mono text-xs`}
+              placeholder="Primary Member Name,Primary Phone Number,Alternate Payment Phone"
+            />
+          )}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={handlePreview} disabled={previewing || !csvText.trim()} className="btn-secondary px-3 py-1.5 text-sm">
+              {previewing ? "Reading..." : "Preview"}
+            </button>
+            {preview && (
+              <>
+                <input type="month" value={defaultJoinedOn} onChange={(e) => setDefaultJoinedOn(e.target.value)} className={inputCls} aria-label="Joining month for everyone in this import" />
+                <button onClick={handleCommitImport} disabled={importing || preview.importableCount === 0} className="btn-primary px-3 py-1.5 text-sm">
+                  {importing ? "Importing..." : `Import ${preview.importableCount} member(s)`}
+                </button>
+              </>
+            )}
+          </div>
+
+          {importError && <p className="text-sm text-danger">{importError}</p>}
+
           {preview && (
-            <>
-              <input
-                type="month"
-                value={defaultJoinedOn}
-                onChange={(e) => setDefaultJoinedOn(e.target.value)}
-                className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-                aria-label="Joining month for everyone in this import"
-              />
-              <button
-                onClick={handleCommitImport}
-                disabled={importing || preview.importableCount === 0}
-                className="rounded bg-slate-800 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60"
-              >
-                {importing ? "Importing..." : `Import ${preview.importableCount} member(s)`}
-              </button>
-            </>
+            <div className="max-h-64 overflow-y-auto rounded-md border border-line text-xs">
+              <p className="border-b border-line bg-paper px-2 py-1 text-ink-soft">
+                {preview.importableCount} importable, {preview.skippedCount} would be skipped
+              </p>
+              {preview.rows.map((row) => (
+                <div key={row.rowNumber} className="border-b border-line px-2 py-1.5 last:border-0">
+                  <span className={row.errors.length > 0 ? "text-danger" : "text-ink"}>
+                    Row {row.rowNumber}: {row.fullName || "(no name)"}
+                  </span>
+                  {row.errors.map((e, i) => <p key={i} className="text-danger">&bull; {e}</p>)}
+                  {row.warnings.map((w, i) => <p key={i} className="text-ochre">&bull; {w}</p>)}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {commitResult && (
+            <div className="rounded-md border border-forest/30 bg-forest-soft px-3 py-2 text-sm text-forest">
+              Created {commitResult.createdCount} member(s), skipped {commitResult.skippedCount}.
+            </div>
           )}
         </div>
+      )}
 
-        {importError && <p className="mt-2 text-sm text-red-600">{importError}</p>}
+      {/* ---- Member list ---- */}
+      <div className="paper-card overflow-hidden">
+        {loadingMembers && <p className="p-4 text-sm text-ink-soft">Loading...</p>}
+        {membersError && <p className="p-4 text-sm text-danger">{membersError}</p>}
+        {!loadingMembers && members.length === 0 && (
+          <p className="p-4 text-sm text-ink-soft">No members yet — add one above or import a CSV.</p>
+        )}
 
-        {preview && (
-          <div className="mt-3 max-h-64 overflow-y-auto rounded border border-slate-200 text-xs">
-            <p className="border-b border-slate-200 bg-slate-50 px-2 py-1 text-slate-600">
-              {preview.importableCount} importable, {preview.skippedCount} would be skipped
-            </p>
-            {preview.rows.map((row) => (
-              <div key={row.rowNumber} className="border-b border-slate-100 px-2 py-1.5 last:border-0">
-                <span className={row.errors.length > 0 ? "text-red-600" : "text-slate-700"}>
-                  Row {row.rowNumber}: {row.fullName || "(no name)"}
-                </span>
-                {row.errors.map((e, i) => (
-                  <p key={i} className="text-red-500">&bull; {e}</p>
-                ))}
-                {row.warnings.map((w, i) => (
-                  <p key={i} className="text-amber-600">&bull; {w}</p>
-                ))}
+        {members.map((member, i) => (
+          <div key={member.id} className={`px-4 py-3 ${i > 0 ? "border-t border-line" : ""}`}>
+            {editingId === member.id ? (
+              <form onSubmit={handleEditSubmit} className="grid gap-2 rounded-md bg-paper p-3 sm:grid-cols-2">
+                <input value={editName} onChange={(e) => setEditName(e.target.value)} className={`${inputCls} sm:col-span-2`} placeholder="Full name" />
+                <input type="month" value={editJoinedOn} onChange={(e) => setEditJoinedOn(e.target.value)} className={inputCls} />
+                <input value={editPrimaryPhone} onChange={(e) => setEditPrimaryPhone(e.target.value)} className={inputCls} placeholder="Primary phone" />
+                <input value={editAlternatePhones} onChange={(e) => setEditAlternatePhones(e.target.value)} className={`${inputCls} sm:col-span-2`} placeholder="Alternate phones, comma separated" />
+                <input value={editShortcodes} onChange={(e) => setEditShortcodes(e.target.value)} className={`${inputCls} sm:col-span-2`} placeholder="Business/shortcode numbers, comma separated" />
+                {editError && <p className="text-xs text-danger sm:col-span-2">{editError}</p>}
+                <div className="flex gap-2 sm:col-span-2">
+                  <button type="submit" disabled={savingEdit} className="btn-primary px-3 py-1 text-xs">
+                    {savingEdit ? "Saving..." : "Save"}
+                  </button>
+                  <button type="button" onClick={() => setEditingId(null)} className="btn-secondary px-3 py-1 text-xs">
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className={`font-medium ${member.is_active ? "text-ink" : "text-ink-soft line-through"}`}>
+                    {member.full_name}
+                    {member.is_admin && (
+                      <span className="ml-2 rounded bg-brass-soft px-1.5 py-0.5 align-middle text-[10px] font-normal text-brass">
+                        Admin
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-xs text-ink-soft">
+                    Joined {monthKeyFromDateString(member.joined_on)} &middot;{" "}
+                    {member.member_phones.find((p) => p.is_primary)?.phone_number ?? "no primary phone"}
+                    {member.member_phones.filter((p) => !p.is_primary).length > 0 &&
+                      ` (+${member.member_phones.filter((p) => !p.is_primary).length} alt)`}
+                  </p>
+                </div>
+                <div className="flex gap-3 text-xs">
+                  <button onClick={() => startEdit(member)} className="link">Edit</button>
+                  <button onClick={() => toggleActive(member)} className="link">
+                    {member.is_active ? "Deactivate" : "Reactivate"}
+                  </button>
+                  {isSuperAdmin && (
+                    <button onClick={() => toggleMemberAdmin(member)} disabled={togglingAdminId === member.id} className="link disabled:opacity-60">
+                      {togglingAdminId === member.id ? "..." : member.is_admin ? "Remove admin" : "Make admin"}
+                    </button>
+                  )}
+                </div>
               </div>
-            ))}
+            )}
           </div>
-        )}
-
-        {commitResult && (
-          <div className="mt-3 rounded border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
-            Created {commitResult.createdCount} member(s), skipped {commitResult.skippedCount}.
-          </div>
-        )}
-      </section>
+        ))}
+      </div>
 
       {/* ---- Reset test data ---- */}
-      <section className="rounded-xl border border-red-200 bg-white p-6 shadow">
-        <h2 className="mb-1 text-lg font-semibold text-red-700">Clear test data</h2>
-        <p className="mb-3 text-xs text-slate-500">
+      <details className="paper-card p-4" style={{ borderColor: "var(--danger)" }}>
+        <summary className="cursor-pointer text-sm font-medium text-danger">Clear test data</summary>
+        <p className="mb-3 mt-2 text-xs text-ink-soft">
           Deletes every member, payment, and message so Setup can be tested again from empty. Settings and
-          the family tree are not affected. Type the phrase below to confirm.
+          the family tree are not affected.
         </p>
         <form onSubmit={handleReset} className="flex flex-wrap items-center gap-2">
-          <input
-            value={confirmText}
-            onChange={(e) => setConfirmText(e.target.value)}
-            placeholder="DELETE ALL TEST DATA"
-            className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-          />
-          <button
-            type="submit"
-            disabled={resetting || confirmText !== "DELETE ALL TEST DATA"}
-            className="rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
-          >
+          <input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder="DELETE ALL TEST DATA" className={inputCls} />
+          <button type="submit" disabled={resetting || confirmText !== "DELETE ALL TEST DATA"} className="rounded-md bg-danger px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40">
             {resetting ? "Clearing..." : "Clear everything"}
           </button>
         </form>
-        {resetError && <p className="mt-2 text-sm text-red-600">{resetError}</p>}
-        {resetDone && <p className="mt-2 text-sm text-green-600">Cleared.</p>}
-      </section>
+        {resetError && <p className="mt-2 text-sm text-danger">{resetError}</p>}
+        {resetDone && <p className="mt-2 text-sm text-forest">Cleared.</p>}
+      </details>
     </div>
   );
 }
