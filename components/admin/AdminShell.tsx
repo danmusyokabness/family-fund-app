@@ -11,12 +11,16 @@ import { useState } from "react";
 import SetupForm from "./SetupForm";
 import MembersManager from "./MembersManager";
 import PaymentsManager from "./PaymentsManager";
+import StatementImport from "./StatementImport";
+import Reminders from "./Reminders";
 
-type Tab = "setup" | "members" | "payments";
+type Tab = "setup" | "members" | "payments" | "import" | "reminders";
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "members", label: "Members" },
   { key: "payments", label: "Payments" },
+  { key: "import", label: "Import" },
+  { key: "reminders", label: "Reminders" },
   { key: "setup", label: "Setup" },
 ];
 
@@ -25,21 +29,25 @@ export default function AdminShell() {
 
   return (
     <div>
-      <div className="ledger-tabs">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            className="ledger-tab"
-            data-active={tab === t.key}
-            onClick={() => setTab(t.key)}
-          >
-            {t.label}
-          </button>
-        ))}
+      <div className="overflow-x-auto">
+        <div className="ledger-tabs w-max min-w-full">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              className="ledger-tab whitespace-nowrap"
+              data-active={tab === t.key}
+              onClick={() => setTab(t.key)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="ledger-panel p-4 sm:p-6">
         {tab === "members" && <MembersManager />}
         {tab === "payments" && <PaymentsManager />}
+        {tab === "import" && <StatementImport />}
+        {tab === "reminders" && <Reminders />}
         {tab === "setup" && <SetupForm />}
       </div>
     </div>

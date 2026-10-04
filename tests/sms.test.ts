@@ -1,0 +1,39 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+
+// serverEnv() requires every one of these to be set, even though sms.ts
+// itself only cares about a few. Fake-but-valid-shaped values are used
+// so the test never touches a real database or a real SMS provider.
+process.env.NEXT_PUBLIC_SUPABASE_URL ??= "https://example.supabase.co";
+process.env.SUPABASE_SERVICE_ROLE_KEY ??= "test-service-role-key";
+process.env.ADMIN_USERNAME ??= "test-admin";
+process.env.ADMIN_PASSWORD ??= "test-password";
+process.env.SESSION_SECRET ??= "test-session-secret";
+process.env.CRON_SECRET ??= "test-cron-secret";
+
+const { sendSms } = await import("../lib/sms.ts");
+
+test("with SMS_LIVE unset (the default), nothing is actually sent — a dry run every time", async () => {
+  delete process.env.SMS_LIVE;
+  const result = await sendSms("254712345678", "Test message");
+  assert.equal(result.ok, true);
+  assert.equal(result.dryRun, true);
+  assert.equal(result.providerResponse, undefined);
+});
+
+test("with SMS_LIVE explicitly false, still a dry run", async () => {
+  process.env.SMS_LIVE = "false";
+  const result = await sendSms("254712345678", "Test message");
+  assert.equal(result.dryRun, true);
+});
+
+test("with SMS_LIVE=true but no Africa's Talking credentials, it fails clearly rather than pretending to send", async () => {
+  process.env.SMS_LIVE = "true";
+  delete process.env.AT_API_KEY;
+  delete process.env.AT_USERNAME;
+  const result = await sendSms("254712345678", "Test message");
+  assert.equal(result.ok, false);
+  assert.equal(result.dryRun, false);
+  assert.ok(result.error?.includes("not configured"));
+  process.env.SMS_LIVE = "false"; // reset for any other test file run in the same process
+});

@@ -55,6 +55,21 @@ export function monthKeyFromInstant(isoTimestamp: string): MonthKey {
   return formatMonthKey(nairobi.getUTCFullYear(), nairobi.getUTCMonth() + 1);
 }
 
+/**
+ * Converts a "YYYY-MM-DD HH:MM:SS" string that represents Nairobi LOCAL
+ * wall-clock time (exactly what M-PESA statements report) into the
+ * correct UTC ISO timestamp for storing in the database. The inverse of
+ * monthKeyFromInstant's offset.
+ */
+export function nairobiWallTimeToUtcIso(naiveDateTime: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/.exec(naiveDateTime.trim());
+  if (!match) throw new Error(`Invalid date/time: "${naiveDateTime}"`);
+  const [, y, mo, d, h, mi, s] = match;
+  const utcMs =
+    Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s)) - NAIROBI_OFFSET_MS;
+  return new Date(utcMs).toISOString();
+}
+
 export function formatMonthKey(year: number, month: number): MonthKey {
   if (month < 1 || month > 12) {
     throw new Error(`Invalid month number: ${month}`);

@@ -11,6 +11,7 @@ import {
   formatMonthYear,
   fyRangeForMonth,
   monthKeyFromInstant,
+  nairobiWallTimeToUtcIso,
 } from "../lib/dates.ts";
 
 test("formatMonthKey pads the month", () => {
@@ -128,4 +129,20 @@ test("monthKeyFromInstant handles Postgres-style timestamps and a year boundary"
 
 test("monthKeyFromInstant rejects a garbage timestamp", () => {
   assert.throws(() => monthKeyFromInstant("not a date"));
+});
+
+test("nairobiWallTimeToUtcIso converts Nairobi wall-clock time to the correct UTC instant", () => {
+  // 10:00 Nairobi (UTC+3) is 07:00 UTC the same day.
+  assert.equal(nairobiWallTimeToUtcIso("2026-09-20 10:00:00"), "2026-09-20T07:00:00.000Z");
+  // 1am Nairobi on 1 Sep is 10pm UTC on 31 Aug — crosses a day boundary.
+  assert.equal(nairobiWallTimeToUtcIso("2026-09-01 01:00:00"), "2026-08-31T22:00:00.000Z");
+});
+
+test("nairobiWallTimeToUtcIso and monthKeyFromInstant agree with each other", () => {
+  const utc = nairobiWallTimeToUtcIso("2026-09-01 01:00:00");
+  assert.equal(monthKeyFromInstant(utc), "2026-09");
+});
+
+test("nairobiWallTimeToUtcIso rejects a malformed string", () => {
+  assert.throws(() => nairobiWallTimeToUtcIso("not a date"));
 });

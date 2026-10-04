@@ -7,12 +7,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test tests/dates.test.ts tests/phone.test.ts tests/ledger.test.ts tests/session-token.test.ts tests/csv.test.ts tests/members-import.test.ts tests/settings.test.ts tests/payment-matching.test.ts tests/dashboard.test.ts"
+    "test": "node --test tests/dates.test.ts tests/phone.test.ts tests/ledger.test.ts tests/session-token.test.ts tests/csv.test.ts tests/members-import.test.ts tests/settings.test.ts tests/payment-matching.test.ts tests/dashboard.test.ts tests/statement-parser.test.ts tests/pdf-statement-line.test.ts tests/statement-csv.test.ts tests/reminders.test.ts tests/sms.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0",
-    "africastalking": "^0.8.3",
-    "next": "16.3.5",
+    "africastalking": "^0.8.0",
+    "next": "^16.3.8",
+    "pdf.js-extract": "^0.2.1",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
@@ -22,7 +23,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.3.5",
+    "eslint-config-next": "^14.2.35",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
