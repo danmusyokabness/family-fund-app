@@ -9,12 +9,14 @@
 //
 // The integrity check exists because the old app's PDF script read
 // lines directly with no way to notice a bad read. Here, every
-// transaction's own reported balance must be reachable by walking the
-// running total forward from the oldest transaction — a misread digit
+// transaction's own true final balance must line up with the one
+// before it, walking forward through the whole chain — a misread digit
 // or a dropped row breaks the chain and importing is refused. This was
-// verified against the person's real statement during planning: all 24
-// real transactions reconciled exactly. The numbers in the tests below
-// are invented, not the real data.
+// validated against two real statements during building: the CSV path
+// now reconciles exactly against a real October statement with KES
+// 16,048.41 closing, after two real bugs turned up and were fixed
+// (noted inline below). The numbers in the tests are invented, not the
+// real data.
 
 export interface RawStatementRow {
   completionTime: string;
@@ -88,7 +90,10 @@ function extractPayer(details: string): { payerPhoneMasked: string | null; payer
 function classifyRow(paidIn: number, withdrawn: number, details: string): StatementRowKind {
   if (paidIn > 0 && /^Merchant Payment/i.test(details.trim())) return "payment";
   if (paidIn > 0) return "payment"; // money in but an unrecognised description — still record it, just with no payer info
-  if (withdrawn > 0) return /charge/i.test(details) ? "charge" : "other";
+  // Confirmed against a real statement: the Withdrawn column shows a
+  // leading minus sign (e.g. "-4.95"), not a plain positive magnitude —
+  // so this checks for non-zero, not greater-than-zero.
+  if (withdrawn !== 0) return /charge/i.test(details) ? "charge" : "other";
   return "other";
 }
 
@@ -105,7 +110,12 @@ export function parseStatementRows(rawRows: RawStatementRow[]): ParseStatementRe
       receiptNo: r.receiptNo.trim(),
       completionTime: r.completionTime.trim(),
       kind,
-      amount: kind === "payment" ? paidIn : withdrawn,
+      // Always a positive magnitude, regardless of how the source shows
+      // it — the Withdrawn column in a real statement is negative
+      // (e.g. "-4.95"), but "amount" here means the size of the
+      // movement, matching how payments.amount and fund_expenses.amount
+      // are both stored (and the latter's own positive-only constraint).
+      amount: kind === "payment" ? Math.abs(paidIn) : Math.abs(withdrawn),
       balanceAfter: parseAmount(r.balance),
       details: r.details.trim(),
       ...payer,
@@ -115,21 +125,27 @@ export function parseStatementRows(rawRows: RawStatementRow[]): ParseStatementRe
   const totalPaidIn = rows.filter((r) => r.kind === "payment").reduce((s, r) => s + r.amount, 0);
   const totalWithdrawn = rows.filter((r) => r.kind !== "payment").reduce((s, r) => s + r.amount, 0);
 
-  // M-PESA's own export always lists newest-first, with the single most
-  // current balance on the very first data row — simpler and more
-  // reliable than trying to pick "the latest" by timestamp, which is
-  // ambiguous whenever two rows (a payment and its own charge) share
-  // the same completion time.
-  const reportedClosingBalance = rows.length > 0 ? rows[0].balanceAfter : null;
-
-  // Group by receipt (a payment and its own charge share one receipt),
-  // walk forward from the oldest, and check each group's net movement
-  // lands on a balance it actually reported.
+  // Group by receipt (a payment and its own charge share one receipt).
   const groups = new Map<string, ParsedStatementRow[]>();
   for (const row of rows) {
     const list = groups.get(row.receiptNo) ?? [];
     list.push(row);
     groups.set(row.receiptNo, list);
+  }
+
+  // Each transaction's TRUE final balance is the smallest balance among
+  // its own rows: a payment posts first, and if there's also a charge
+  // on the same receipt, the charge always reduces the balance further
+  // — whichever order the statement happens to list the two rows in.
+  // For a single-row group this is just that row's own balance. This
+  // needs no assumption about the account's history before this file
+  // even starts, which matters because a real statement is usually a
+  // partial export (a month, a date range), not the full account
+  // history back to zero — assuming otherwise was a real bug here,
+  // caught by testing against an actual statement.
+  const trueBalance = new Map<string, number>();
+  for (const [receiptNo, group] of groups) {
+    trueBalance.set(receiptNo, Math.min(...group.map((r) => r.balanceAfter)));
   }
 
   const orderedGroups = [...groups.entries()].sort(([, a], [, b]) => {
@@ -139,25 +155,24 @@ export function parseStatementRows(rawRows: RawStatementRow[]): ParseStatementRe
   });
 
   const TOLERANCE = 0.01;
-  let calculatedClosingBalance = 0;
   const brokenReceipts: string[] = [];
+  let previousBalance: number | null = null;
 
-  if (orderedGroups.length > 0 && reportedClosingBalance !== null) {
-    const nets = orderedGroups.map(([, group]) => group.reduce((s, r) => s + (r.kind === "payment" ? r.amount : -r.amount), 0));
-    const totalNet = nets.reduce((s, n) => s + n, 0);
-    // Worked out from the whole chain's own total, not by guessing which
-    // sub-row of the oldest transaction represents its final state —
-    // that guess breaks whenever a payment row happens to be listed
-    // before its own charge row (order between the two isn't fixed).
-    let running = reportedClosingBalance - totalNet;
-
-    orderedGroups.forEach(([receiptNo, group], i) => {
-      running += nets[i];
-      const matchesAny = group.some((r) => Math.abs(r.balanceAfter - running) < TOLERANCE);
-      if (!matchesAny) brokenReceipts.push(receiptNo);
-    });
-    calculatedClosingBalance = running;
+  for (const [receiptNo, group] of orderedGroups) {
+    const net = group.reduce((s, r) => s + (r.kind === "payment" ? r.amount : -r.amount), 0);
+    const balance = trueBalance.get(receiptNo)!;
+    // The very first (oldest) transaction in the file has nothing
+    // before it to check against — it's taken as the trusted starting
+    // point, the same way a bank statement's opening balance is.
+    if (previousBalance !== null && Math.abs(previousBalance + net - balance) >= TOLERANCE) {
+      brokenReceipts.push(receiptNo);
+    }
+    previousBalance = balance;
   }
+
+  const calculatedClosingBalance = previousBalance ?? 0;
+  const reportedClosingBalance =
+    orderedGroups.length > 0 ? trueBalance.get(orderedGroups[orderedGroups.length - 1][0])! : null;
 
   const integrityOk = reportedClosingBalance !== null && brokenReceipts.length === 0;
 

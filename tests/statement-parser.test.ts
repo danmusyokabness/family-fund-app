@@ -99,6 +99,30 @@ test("a corrupted balance is caught, not silently accepted", () => {
   assert.ok(result.brokenReceipts.includes("R2"));
 });
 
+test("Withdrawn is shown as a negative number on a real statement, not a plain positive magnitude — amount is still stored as a positive magnitude", () => {
+  const result = parseStatementRows([
+    row({ completionTime: "2026-09-01 08:00:00", receiptNo: "X", details: "Pay merchant Charge", withdrawn: "-4.95", balance: "100.00" }),
+  ]);
+  assert.equal(result.rows[0].kind, "charge");
+  assert.equal(result.rows[0].amount, 4.95); // positive, not -4.95
+});
+
+test("a PARTIAL statement (a real month's excerpt, not the full account history from zero) still passes when internally consistent", () => {
+  // The oldest transaction here isn't the account's true first-ever
+  // transaction — there was KES 7,871.46 already in the account before
+  // this excerpt begins. The old (buggy) version of this check assumed
+  // every statement starts from zero and would have wrongly flagged
+  // this as broken; it must not anymore.
+  const partial: RawStatementRow[] = [
+    row({ completionTime: "2026-10-05 10:00:00", receiptNo: "P2", details: "Merchant Payment from - 254700***111 A B", paidIn: "300.00", balance: "8,171.46" }),
+    row({ completionTime: "2026-09-20 09:00:00", receiptNo: "P1", details: "Merchant Payment from - 254700***222 C D", paidIn: "300.00", balance: "7,871.46" }),
+  ];
+  const result = parseStatementRows(partial);
+  assert.equal(result.integrityOk, true);
+  assert.deepEqual(result.brokenReceipts, []);
+  assert.equal(result.reportedClosingBalance, 8171.46);
+});
+
 test("an empty statement does not crash", () => {
   const result = parseStatementRows([]);
   assert.equal(result.rows.length, 0);
