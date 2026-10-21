@@ -2,6 +2,7 @@
 // components/admin/MembersManager.tsx
 
 import { useEffect, useRef, useState } from "react";
+import { compareMembers, isManuallyOrdered, moveWithinManualGroup, type OrderableMember } from "@/lib/member-order";
 
 interface MemberPhone {
   id: string;
@@ -22,6 +23,17 @@ interface Member {
   notes: string | null;
   member_phones: MemberPhone[];
   payer_aliases: MemberAlias[];
+  sort_order: number | null;
+  family_nodes: { date_of_birth: string | null; deleted_at: string | null }[] | null;
+}
+
+/** The birth date from the member's linked (not deleted) family-tree node, if any. */
+function knownBirthDate(member: Member): string | null {
+  const node = (member.family_nodes ?? []).find((n) => n.date_of_birth && !n.deleted_at);
+  return node?.date_of_birth ?? null;
+}
+function toOrderable(member: Member): OrderableMember {
+  return { id: member.id, fullName: member.full_name, dateOfBirth: knownBirthDate(member), sortOrder: member.sort_order };
 }
 
 interface ParsedRow {
@@ -60,6 +72,8 @@ export default function MembersManager() {
   const [membersError, setMembersError] = useState<string | null>(null);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [togglingAdminId, setTogglingAdminId] = useState<string | null>(null);
+  const [movingId, setMovingId] = useState<string | null>(null);
+  const [orderError, setOrderError] = useState<string | null>(null);
 
   // ---- Add member (collapsed by default) ----
   const [showAddForm, setShowAddForm] = useState(false);
@@ -126,6 +140,27 @@ export default function MembersManager() {
       await loadMembers();
     } finally {
       setTogglingAdminId(null);
+    }
+  }
+
+  async function moveMember(member: Member, direction: "up" | "down") {
+    const newOrder = moveWithinManualGroup(members.map(toOrderable), member.id, direction);
+    if (!newOrder) return;
+    setMovingId(member.id);
+    setOrderError(null);
+    try {
+      const res = await fetch("/api/admin/members/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderedIds: newOrder }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not save the new order.");
+      await loadMembers();
+    } catch (err) {
+      setOrderError(err instanceof Error ? err.message : "Could not save the new order.");
+    } finally {
+      setMovingId(null);
     }
   }
 
@@ -298,6 +333,11 @@ export default function MembersManager() {
     }
   }
 
+  // Same order the ledger uses: eldest first where the birth date is known,
+  // then everyone else in the order set with the arrows below.
+  const orderedMembers = [...members].sort((a, b) => compareMembers(toOrderable(a), toOrderable(b)));
+  const orderables = members.map(toOrderable);
+
   return (
     <div className="space-y-6">
       {/* ---- Action bar ---- */}
@@ -411,6 +451,12 @@ export default function MembersManager() {
       )}
 
       {/* ---- Member list ---- */}
+      <p className="text-xs text-ink-soft">
+        Members are listed eldest first once their birth date is known (it comes from the family tree). Anyone
+        whose age is not known yet can be moved with the arrows; they stay in the order you set until a birth
+        date is added.
+      </p>
+      {orderError && <p className="text-sm text-danger">{orderError}</p>}
       <div className="paper-card overflow-hidden">
         {loadingMembers && <p className="p-4 text-sm text-ink-soft">Loading...</p>}
         {membersError && <p className="p-4 text-sm text-danger">{membersError}</p>}
@@ -418,7 +464,7 @@ export default function MembersManager() {
           <p className="p-4 text-sm text-ink-soft">No members yet — add one above or import a CSV.</p>
         )}
 
-        {members.map((member, i) => (
+        {orderedMembers.map((member, i) => (
           <div key={member.id} className={`px-4 py-3 ${i > 0 ? "border-t border-line" : ""}`}>
             {editingId === member.id ? (
               <form onSubmit={handleEditSubmit} className="grid gap-2 rounded-md bg-paper p-3 sm:grid-cols-2">
@@ -453,9 +499,34 @@ export default function MembersManager() {
                     {member.member_phones.find((p) => p.is_primary)?.phone_number ?? "no primary phone"}
                     {member.member_phones.filter((p) => !p.is_primary).length > 0 &&
                       ` (+${member.member_phones.filter((p) => !p.is_primary).length} alt)`}
+                    {knownBirthDate(member) && <> &middot; Born {knownBirthDate(member)}</>}
                   </p>
                 </div>
-                <div className="flex gap-3 text-xs">
+                <div className="flex items-center gap-3 text-xs">
+                  {isManuallyOrdered(toOrderable(member)) ? (
+                    <span className="flex items-center gap-1" title="Age not known yet: move this member up or down the list">
+                      <button
+                        type="button"
+                        aria-label={`Move ${member.full_name} up`}
+                        onClick={() => moveMember(member, "up")}
+                        disabled={movingId !== null || moveWithinManualGroup(orderables, member.id, "up") === null}
+                        className="btn-secondary px-2 py-0.5 disabled:opacity-30"
+                      >
+                        &uarr;
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Move ${member.full_name} down`}
+                        onClick={() => moveMember(member, "down")}
+                        disabled={movingId !== null || moveWithinManualGroup(orderables, member.id, "down") === null}
+                        className="btn-secondary px-2 py-0.5 disabled:opacity-30"
+                      >
+                        &darr;
+                      </button>
+                    </span>
+                  ) : (
+                    <span className="text-ink-soft" title="Placed automatically by age">auto</span>
+                  )}
                   <button onClick={() => startEdit(member)} className="link">Edit</button>
                   <button onClick={() => toggleActive(member)} className="link">
                     {member.is_active ? "Deactivate" : "Reactivate"}

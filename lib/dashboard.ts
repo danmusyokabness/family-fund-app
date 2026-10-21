@@ -39,6 +39,7 @@ import {
   summarizeUnpaidMonths,
   type MonthStatus,
 } from "./ledger.ts";
+import { compareMembers } from "./member-order.ts";
 
 export interface DashboardMember {
   id: string;
@@ -47,6 +48,8 @@ export interface DashboardMember {
   joinedOn: string;
   /** "YYYY-MM-DD" from the linked family-tree node, or null if not known yet. Used only for sorting. */
   dateOfBirth: string | null;
+  /** The admin's manual position among members with no known birth date; null/absent = never placed. */
+  sortOrder?: number | null;
 }
 
 export interface DashboardAllocation {
@@ -134,18 +137,6 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-/** Eldest first by known date of birth; anyone without one comes after, alphabetically. */
-function compareEldestFirst(a: DashboardMember, b: DashboardMember): number {
-  if (a.dateOfBirth && b.dateOfBirth) {
-    if (a.dateOfBirth !== b.dateOfBirth) return a.dateOfBirth < b.dateOfBirth ? -1 : 1;
-  } else if (a.dateOfBirth) {
-    return -1;
-  } else if (b.dateOfBirth) {
-    return 1;
-  }
-  return a.fullName.localeCompare(b.fullName, undefined, { sensitivity: "base" });
-}
-
 export function buildDashboard(input: DashboardInput): DashboardResult {
   const fyStartMonth = input.fyStartMonth ?? DEFAULT_FY_START_MONTH;
   const fy = fyRangeForMonth(input.selectedFyMonth ?? input.asOfMonth, fyStartMonth);
@@ -158,7 +149,12 @@ export function buildDashboard(input: DashboardInput): DashboardResult {
   }
 
   // ---- The grid ------------------------------------------------------------
-  const sortedMembers = [...input.members].sort(compareEldestFirst);
+  const sortedMembers = [...input.members].sort((a, b) =>
+    compareMembers(
+      { id: a.id, fullName: a.fullName, dateOfBirth: a.dateOfBirth, sortOrder: a.sortOrder ?? null },
+      { id: b.id, fullName: b.fullName, dateOfBirth: b.dateOfBirth, sortOrder: b.sortOrder ?? null }
+    )
+  );
 
   const rows: DashboardRow[] = sortedMembers.map((member) => {
     const joinedMonth = monthKeyFromDateString(member.joinedOn);

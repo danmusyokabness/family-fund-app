@@ -1,64 +1,32 @@
 -- =====================================================================
--- db/001_schema.sql
--- Family Emergency Fund: clean schema (Step 1)
+-- db/001_schema.sql   (REWRITTEN 21 Oct 2026: now SAFE TO RUN TWICE)
+-- Family Emergency Fund: base schema
 --
 -- HOW TO RUN
 --   Supabase dashboard > SQL Editor > New query > paste this whole file > Run.
 --
--- WHAT IT DOES
---   * DROPS the old, non-functional tables: ledger_entries, member_phones,
---     members, message_board (and re-creates them in the new design).
---   * KEEPS family_nodes exactly as it is (it is cleaned up in Step 10),
---     so any family tree data you already entered is safe.
---   * Creates every table EMPTY. There is no seed data at all: fund name,
---     Till number, target, members and so on are entered later through
---     the Setup page.
---   * Turns on Row Level Security on every table and takes away all access
---     from the public "anon" and "authenticated" roles. Only the server
---     (using the service-role key) can read or write.
+-- SAFE TO RE-RUN. This version never drops, deletes or overwrites
+-- anything. Every table and index is created only if it does not exist
+-- yet, so running it on your live database changes nothing that is
+-- already there. (The OLD version of this file deleted every table; if
+-- you still have it, do not use it.)
 --
--- SAFETY GUARD
---   If public.payments already contains rows, this script refuses to run,
---   so it can never wipe real payment data by accident. During testing
---   (no payments yet) you can re-run it freely to reset everything.
+-- ORDER FOR A BRAND-NEW DATABASE: 001, then 002, 003, 004.
+-- ON YOUR LIVE DATABASE you only need 004 (001-003 are already applied),
+-- but running all four again is harmless.
+--
+-- WHAT IT DOES
+--   * Creates every table EMPTY with no seed data. Fund name, Till number,
+--     target, members and so on are entered through the Setup page.
+--   * Turns on Row Level Security on every table and takes away all
+--     access from the public "anon" and "authenticated" roles. Only the
+--     server (using the service-role key) can read or write.
 -- =====================================================================
-
-
--- ---------------------------------------------------------------------
--- 0. Safety guard
--- ---------------------------------------------------------------------
-do $$
-begin
-  if to_regclass('public.payments') is not null then
-    if exists (select 1 from public.payments limit 1) then
-      raise exception 'Refusing to reset: public.payments already contains rows. If you really want to wipe everything, delete this safety block first.';
-    end if;
-  end if;
-end $$;
-
-
--- ---------------------------------------------------------------------
--- 1. Drop old and previous-run tables (children first)
--- ---------------------------------------------------------------------
-drop table if exists public.payment_allocations cascade;
-drop table if exists public.payer_aliases       cascade;
-drop table if exists public.payments            cascade;
-drop table if exists public.fund_expenses       cascade;
-drop table if exists public.imports             cascade;
-drop table if exists public.sms_log             cascade;
-drop table if exists public.job_runs            cascade;
-drop table if exists public.login_attempts      cascade;
-drop table if exists public.message_board       cascade;
-drop table if exists public.ledger_entries      cascade;
-drop table if exists public.member_phones       cascade;
-drop table if exists public.members             cascade;
-drop table if exists public.settings            cascade;
-
 
 -- ---------------------------------------------------------------------
 -- 2. settings: key/value configuration, empty until Setup is saved
 -- ---------------------------------------------------------------------
-create table public.settings (
+create table if not exists public.settings (
   key        text primary key,
   value      text not null,
   updated_at timestamptz not null default now()
@@ -68,7 +36,7 @@ create table public.settings (
 -- ---------------------------------------------------------------------
 -- 3. members and their phones
 -- ---------------------------------------------------------------------
-create table public.members (
+create table if not exists public.members (
   id         uuid primary key default gen_random_uuid(),
   full_name  text not null check (length(btrim(full_name)) > 0),
   -- First day of the month the member started owing contributions.
@@ -79,11 +47,11 @@ create table public.members (
   updated_at timestamptz not null default now()
 );
 
-create index members_full_name_idx on public.members (lower(full_name));
+create index if not exists members_full_name_idx on public.members (lower(full_name));
 
 -- Full, real phone numbers only, stored as 2547XXXXXXXX or 2541XXXXXXXX.
 -- Masked numbers and business numbers live in payer_aliases instead.
-create table public.member_phones (
+create table if not exists public.member_phones (
   id           uuid primary key default gen_random_uuid(),
   member_id    uuid not null references public.members (id) on delete cascade,
   phone_number text not null unique check (phone_number ~ '^254[17][0-9]{8}$'),
@@ -91,10 +59,10 @@ create table public.member_phones (
   created_at   timestamptz not null default now()
 );
 
-create index member_phones_member_idx on public.member_phones (member_id);
+create index if not exists member_phones_member_idx on public.member_phones (member_id);
 
 -- At most one primary phone per member.
-create unique index member_phones_one_primary_idx
+create unique index if not exists member_phones_one_primary_idx
   on public.member_phones (member_id)
   where is_primary;
 
@@ -105,7 +73,7 @@ create unique index member_phones_one_primary_idx
 --    shortcode    : a business number, e.g. 8760493
 --    payer_name   : an M-PESA name remembered after a confirmation
 -- ---------------------------------------------------------------------
-create table public.payer_aliases (
+create table if not exists public.payer_aliases (
   id          uuid primary key default gen_random_uuid(),
   member_id   uuid not null references public.members (id) on delete cascade,
   alias_type  text not null check (alias_type in ('masked_phone', 'shortcode', 'payer_name')),
@@ -115,13 +83,13 @@ create table public.payer_aliases (
   unique (member_id, alias_type, alias_value)
 );
 
-create index payer_aliases_lookup_idx on public.payer_aliases (alias_type, alias_value);
+create index if not exists payer_aliases_lookup_idx on public.payer_aliases (alias_type, alias_value);
 
 
 -- ---------------------------------------------------------------------
 -- 5. imports: one row per statement upload (audit trail)
 -- ---------------------------------------------------------------------
-create table public.imports (
+create table if not exists public.imports (
   id                         uuid primary key default gen_random_uuid(),
   source                     text not null check (source in ('pdf', 'csv', 'daraja')),
   filename                   text,
@@ -152,7 +120,7 @@ create table public.imports (
 --      unmatched          nothing usable, NOT counted yet
 --      ignored            money in that is not a contribution
 -- ---------------------------------------------------------------------
-create table public.payments (
+create table if not exists public.payments (
   id                  uuid primary key default gen_random_uuid(),
   amount              numeric(12, 2) not null check (amount <> 0),
   kind                text not null check (kind in ('mpesa', 'manual', 'adjustment', 'opening')),
@@ -177,19 +145,19 @@ create table public.payments (
 );
 
 -- A receipt can only ever be recorded once, so re-importing never doubles anything.
-create unique index payments_receipt_uq
+create unique index if not exists payments_receipt_uq
   on public.payments (mpesa_receipt)
   where mpesa_receipt is not null;
 
-create index payments_paid_at_idx on public.payments (paid_at desc);
-create index payments_status_idx  on public.payments (match_status);
+create index if not exists payments_paid_at_idx on public.payments (paid_at desc);
+create index if not exists payments_status_idx  on public.payments (match_status);
 
 
 -- ---------------------------------------------------------------------
 -- 7. payment_allocations: who each payment counts for
 --    A split is simply several allocations for one payment.
 -- ---------------------------------------------------------------------
-create table public.payment_allocations (
+create table if not exists public.payment_allocations (
   id         uuid primary key default gen_random_uuid(),
   payment_id uuid not null references public.payments (id) on delete cascade,
   member_id  uuid not null references public.members (id) on delete restrict,
@@ -198,15 +166,15 @@ create table public.payment_allocations (
   unique (payment_id, member_id)
 );
 
-create index payment_allocations_member_idx  on public.payment_allocations (member_id);
-create index payment_allocations_payment_idx on public.payment_allocations (payment_id);
+create index if not exists payment_allocations_member_idx  on public.payment_allocations (member_id);
+create index if not exists payment_allocations_payment_idx on public.payment_allocations (payment_id);
 
 
 -- ---------------------------------------------------------------------
 -- 8. fund_expenses: money out of the Till (M-PESA charges, withdrawals)
 --    Amounts are stored as positive numbers.
 -- ---------------------------------------------------------------------
-create table public.fund_expenses (
+create table if not exists public.fund_expenses (
   id            uuid primary key default gen_random_uuid(),
   kind          text not null check (kind in ('charge', 'withdrawal', 'other')),
   amount        numeric(12, 2) not null check (amount > 0),
@@ -221,17 +189,17 @@ create table public.fund_expenses (
 
 -- A charge shares its receipt with the payment it belongs to, so uniqueness
 -- is on receipt PLUS kind.
-create unique index fund_expenses_receipt_kind_uq
+create unique index if not exists fund_expenses_receipt_kind_uq
   on public.fund_expenses (mpesa_receipt, kind)
   where mpesa_receipt is not null;
 
-create index fund_expenses_occurred_idx on public.fund_expenses (occurred_at desc);
+create index if not exists fund_expenses_occurred_idx on public.fund_expenses (occurred_at desc);
 
 
 -- ---------------------------------------------------------------------
 -- 9. sms_log: every SMS attempt (including dry runs)
 -- ---------------------------------------------------------------------
-create table public.sms_log (
+create table if not exists public.sms_log (
   id                uuid primary key default gen_random_uuid(),
   kind              text not null check (kind in ('reminder', 'report', 'test')),
   period            text not null check (period ~ '^[0-9]{4}-[0-9]{2}$'),
@@ -247,17 +215,17 @@ create table public.sms_log (
 
 -- One SMS per member, per kind, per period can ever be marked "sent",
 -- so a retry can never double-send.
-create unique index sms_log_one_sent_idx
+create unique index if not exists sms_log_one_sent_idx
   on public.sms_log (kind, period, member_id)
   where status = 'sent' and member_id is not null;
 
-create index sms_log_period_idx on public.sms_log (period, kind);
+create index if not exists sms_log_period_idx on public.sms_log (period, kind);
 
 
 -- ---------------------------------------------------------------------
 -- 10. job_runs: scheduled job history (feeds the admin health panel)
 -- ---------------------------------------------------------------------
-create table public.job_runs (
+create table if not exists public.job_runs (
   id          uuid primary key default gen_random_uuid(),
   job         text not null,
   started_at  timestamptz not null default now(),
@@ -266,13 +234,13 @@ create table public.job_runs (
   details     jsonb
 );
 
-create index job_runs_job_idx on public.job_runs (job, started_at desc);
+create index if not exists job_runs_job_idx on public.job_runs (job, started_at desc);
 
 
 -- ---------------------------------------------------------------------
 -- 11. login_attempts: throttling for member and admin logins
 -- ---------------------------------------------------------------------
-create table public.login_attempts (
+create table if not exists public.login_attempts (
   id         uuid primary key default gen_random_uuid(),
   kind       text not null check (kind in ('member', 'admin')),
   identifier text not null,
@@ -281,14 +249,14 @@ create table public.login_attempts (
   created_at timestamptz not null default now()
 );
 
-create index login_attempts_identifier_idx on public.login_attempts (kind, identifier, created_at desc);
-create index login_attempts_ip_idx         on public.login_attempts (ip, created_at desc);
+create index if not exists login_attempts_identifier_idx on public.login_attempts (kind, identifier, created_at desc);
+create index if not exists login_attempts_ip_idx         on public.login_attempts (ip, created_at desc);
 
 
 -- ---------------------------------------------------------------------
 -- 12. message_board
 -- ---------------------------------------------------------------------
-create table public.message_board (
+create table if not exists public.message_board (
   id          uuid primary key default gen_random_uuid(),
   member_id   uuid references public.members (id) on delete set null,
   sender_name text not null check (length(btrim(sender_name)) > 0),
@@ -297,11 +265,11 @@ create table public.message_board (
   created_at  timestamptz not null default now()
 );
 
-create index message_board_created_idx on public.message_board (created_at desc);
+create index if not exists message_board_created_idx on public.message_board (created_at desc);
 
 
 -- ---------------------------------------------------------------------
--- 13. family_nodes: kept exactly as it is today (cleaned up in Step 10).
+-- 13. family_nodes: the base table. Extra columns arrive in 003 and 004.
 --     "if not exists" means an existing table and its data are untouched.
 -- ---------------------------------------------------------------------
 create table if not exists public.family_nodes (

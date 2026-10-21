@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
     db.from("settings").select("key, value"),
     db
       .from("members")
-      .select("id, full_name, joined_on, family_nodes(date_of_birth)")
+      .select("id, full_name, joined_on, sort_order, family_nodes(date_of_birth, deleted_at)")
       .eq("is_active", true),
   ]);
 
@@ -45,12 +45,13 @@ export async function GET(req: NextRequest) {
   const settings = mergeSettingsWithDefaults(stored);
 
   const members: DashboardMember[] = (memberRows ?? []).map((m) => {
-    const nodes = (m as unknown as { family_nodes: { date_of_birth: string | null }[] }).family_nodes ?? [];
+    const nodes = (m as unknown as { family_nodes: { date_of_birth: string | null; deleted_at: string | null }[] }).family_nodes ?? [];
     return {
       id: m.id,
       fullName: m.full_name,
       joinedOn: m.joined_on,
-      dateOfBirth: nodes[0]?.date_of_birth ?? null,
+      dateOfBirth: nodes.find((n) => n.date_of_birth && !n.deleted_at)?.date_of_birth ?? null,
+      sortOrder: (m as unknown as { sort_order: number | null }).sort_order ?? null,
     };
   });
 

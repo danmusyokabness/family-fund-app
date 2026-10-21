@@ -11,7 +11,7 @@ process.env.ADMIN_PASSWORD ??= "test-password";
 process.env.SESSION_SECRET ??= "test-session-secret";
 process.env.CRON_SECRET ??= "test-cron-secret";
 
-const { sendSms } = await import("../lib/sms.ts");
+const { sendSms, toProviderPhone } = await import("../lib/sms.ts");
 
 test("with SMS_LIVE unset (the default), nothing is actually sent — a dry run every time", async () => {
   delete process.env.SMS_LIVE;
@@ -36,4 +36,31 @@ test("with SMS_LIVE=true but no Africa's Talking credentials, it fails clearly r
   assert.equal(result.dryRun, false);
   assert.ok(result.error?.includes("not configured"));
   process.env.SMS_LIVE = "false"; // reset for any other test file run in the same process
+});
+
+test("toProviderPhone adds the + that Africa's Talking expects, and accepts every common way of typing a number", () => {
+  assert.equal(toProviderPhone("254712345678"), "+254712345678");
+  assert.equal(toProviderPhone("0712345678"), "+254712345678");
+  assert.equal(toProviderPhone("+254 712 345 678"), "+254712345678");
+  assert.equal(toProviderPhone("254110000000"), "+254110000000");
+});
+
+test("toProviderPhone refuses anything that is not a full Kenyan mobile number", () => {
+  assert.equal(toProviderPhone(""), null);
+  assert.equal(toProviderPhone("12345"), null);
+  assert.equal(toProviderPhone("254727***905"), null);
+  assert.equal(toProviderPhone("254312345678"), null);
+});
+
+test("a live send to an invalid number fails clearly instead of reaching the provider", async () => {
+  process.env.SMS_LIVE = "true";
+  process.env.AT_API_KEY = "fake-key-never-used";
+  process.env.AT_USERNAME = "fake-user";
+  const result = await sendSms("not-a-number", "Test message");
+  assert.equal(result.ok, false);
+  assert.equal(result.dryRun, false);
+  assert.ok(result.error?.includes("not a valid"));
+  delete process.env.AT_API_KEY;
+  delete process.env.AT_USERNAME;
+  process.env.SMS_LIVE = "false";
 });

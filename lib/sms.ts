@@ -8,6 +8,18 @@
 // AND SMS_LIVE=true does a message really leave.
 
 import { serverEnv } from "./env.ts";
+import { normalizePhone } from "./phone.ts";
+
+/**
+ * Africa's Talking wants international format WITH a plus sign
+ * (+254712345678). The database stores 254712345678, so the plus is
+ * added here, in the one place that talks to the provider. Returns null
+ * if the number is not a recognisable Kenyan mobile number.
+ */
+export function toProviderPhone(phone: string): string | null {
+  const canonical = normalizePhone(phone);
+  return canonical ? `+${canonical}` : null;
+}
 
 export interface SendSmsResult {
   ok: boolean;
@@ -27,6 +39,11 @@ export async function sendSms(toPhone: string, message: string): Promise<SendSms
     return { ok: false, dryRun: false, error: "Africa's Talking is not configured (AT_API_KEY / AT_USERNAME missing)." };
   }
 
+  const providerPhone = toProviderPhone(toPhone);
+  if (!providerPhone) {
+    return { ok: false, dryRun: false, error: `"${toPhone}" is not a valid Kenyan mobile number.` };
+  }
+
   try {
     // Required at call time, not at module load, so this file can be
     // imported (and its dry-run path used) even before the dependency
@@ -36,7 +53,7 @@ export async function sendSms(toPhone: string, message: string): Promise<SendSms
       username: env.atUsername,
     });
 
-    const options: Record<string, unknown> = { to: [toPhone], message };
+    const options: Record<string, unknown> = { to: [providerPhone], message };
     if (env.atSenderId) options.from = env.atSenderId;
 
     const response = await africastalking.SMS.send(options);
