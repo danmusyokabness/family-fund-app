@@ -55,7 +55,7 @@ A web tracker for a family emergency fund started **August 2026**.
 | Area | Status |
 |---|---|
 | Foundation, login, setup, members, payments, statement import (CSV proven; PDF table reader rebuilt, see issue 3), member dashboard, 7th reminder, daily cron | ✅ Built |
-| **Batch 1 (foundation)**: SQL 001–004 (idempotent), SMS `+254` fix, PDF table reader, manual member ordering (admin up/down arrows), pure libraries for tree/board/report | ✅ Delivered. **`npm test` = 188 pass, 0 fail** (138 before + 50 new). SQL not executed in the build environment (no Postgres): verify by running it |
+| **Batch 1 (foundation)**: SQL 001–004 (idempotent), SMS `+254` fix, PDF table reader, manual member ordering (admin up/down arrows), pure libraries for tree/board/report | ✅ Delivered. **`npm test` = 192 pass, 0 fail** (138 before + 54 new). SQL not executed in the build environment (no Postgres): verify by running it |
 | Database migrations 001–003 | ✅ Applied in the live database (confirmed from a schema export: `members.is_admin`, `family_nodes.member_id`, `family_nodes.date_of_birth` exist) |
 | D19 member ordering | ✅ `lib/member-order.ts`: eldest first where birth date known, then the admin's manual order (`members.sort_order`), then name. Used by the dashboard ledger AND the admin member list |
 | Family tree (pages, API, history, undo, first-login flow) | 🟡 Rules + tests done (`lib/family-tree.ts`), tables ready after `db/004`; **pages/API are Batch 2** |
@@ -336,6 +336,7 @@ Each accent also has a `-soft` tint for backgrounds. Fraunces (serif) only for t
 
 ## 14. CHANGELOG
 
+- **v6.2 (21 Oct 2026):** With `unpdf` the real original PDF opened (password accepted) but "no transactions were found". Likely cause: the reader assumed word-level text pieces; real PDFs give whole phrases ("Receipt No."). `lib/pdf-table.ts` now splits every piece into positioned words (`splitIntoWords`) for header/date/barrier detection, tolerance raised to 3.5, and a no-rows failure now returns a MASKED layout diagnostic (`describeItemsForDebug`: letters→a/A, digits→9, structural words kept). 192 tests. If it still fails, the owner pastes the "[Diagnostic: ...]" text from the red error and the next step is to fit the reader to that exact layout.
 - **v6.1 (21 Oct 2026):** Live PDF import failed on Vercel (pdf.js-extract fake-worker error). `lib/pdf-statement.ts` rewritten on `unpdf` (flips pdf.js' bottom-up y to top-down, destroys the document, maps password errors to plain messages). Requires `npm install unpdf`.
 - **v6 (21 Oct 2026) — Batch 1 delivered:** idempotent `db/001`–`004`; SMS `+254` fix; PDF reader rebuilt for the real wrapped-cell layout (`lib/pdf-table.ts`, rewritten `lib/pdf-statement.ts`); `lib/member-order.ts` + admin up/down reordering (`/api/admin/members/reorder`, `MembersManager`); dashboard uses `sort_order` and ignores soft-deleted nodes; pure libs `family-tree`, `board`, `report`. 188 tests pass; new files strict-type-checked with `tsc`; SQL and Next.js routes/components NOT executed in the build environment.
 - **v5 (21 Oct 2026):** Full re-audit against the zip (138 tests pass). Confirmed live DB has 002/003 applied. Found destructive `001`, SMS `+` prefix issue, stale files. Approved decisions A1–A3 and a six-batch completion plan. Africa's Talking app `familyfundapp` created.

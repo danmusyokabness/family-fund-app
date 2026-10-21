@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readTablePage, detectDirection, type PdfTextItem } from "../lib/pdf-table.ts";
+import { readTablePage, detectDirection, splitIntoWords, maskText, describeItemsForDebug, type PdfTextItem } from "../lib/pdf-table.ts";
 import { parseStatementRows } from "../lib/statement-parser.ts";
 
 // ---------------------------------------------------------------------
@@ -54,7 +54,9 @@ interface FakeRow {
   other: string[];
 }
 
-function buildPage(rows: FakeRow[], opts: { flip?: boolean; withHeader?: boolean } = {}): PdfTextItem[] {
+// `coarse` imitates PDF libraries that hand over whole phrases instead of single words:
+// "Receipt No." as one piece, "Completion Time" on one line, and the date and time together.
+function buildPage(rows: FakeRow[], opts: { flip?: boolean; withHeader?: boolean; coarse?: boolean } = {}): PdfTextItem[] {
   const items: PdfTextItem[] = [];
   const withHeader = opts.withHeader !== false;
 
@@ -63,7 +65,13 @@ function buildPage(rows: FakeRow[], opts: { flip?: boolean; withHeader?: boolean
   items.push(text("Account", 220, 150), text("Type", 250, 150), text("-", 270, 150), text("Merchant", 280, 150), text("Account", 320, 150));
 
   let y = 175;
-  if (withHeader) {
+  if (withHeader && opts.coarse) {
+    const h = HEADER_CENTRES;
+    items.push(centred("Receipt No.", h.receipt, y), centred("Completion Time", h.completion, y), centred("Details", h.details, y));
+    items.push(centred("Transaction Status", h.status, y), centred("Paid In", h.paidIn, y), centred("Withdrawn", h.withdrawn, y));
+    items.push(centred("Balance", h.balance, y), centred("Transaction Type", h.type, y), centred("Other Party", h.other, y));
+    y += 24;
+  } else if (withHeader) {
     const h = HEADER_CENTRES;
     items.push(text("Receipt", h.receipt - 16, y), text("No.", h.receipt + 12, y));
     items.push(centred("Completion", h.completion, y), centred("Time", h.completion, y + 8));
@@ -79,7 +87,8 @@ function buildPage(rows: FakeRow[], opts: { flip?: boolean; withHeader?: boolean
 
   for (const r of rows) {
     items.push(text(r.receipt, COL.receiptLeft, y));
-    items.push(text(r.date, COL.completionLeft, y), text(r.time, COL.completionLeft, y + LINE));
+    if (opts.coarse) items.push(text(`${r.date} ${r.time}`, COL.completionLeft, y));
+    else items.push(text(r.date, COL.completionLeft, y), text(r.time, COL.completionLeft, y + LINE));
     r.details.forEach((line, i) => items.push(text(line, COL.detailsLeft, y + i * LINE)));
     items.push(text("Completed", COL.statusLeft, y));
     if (r.paidIn) items.push(rightAligned(r.paidIn, COL.paidInRight, y));
@@ -209,4 +218,46 @@ test("a page with no table at all (for example a picture-only PDF) yields no row
   const result = readTablePage(onlyFooter);
   assert.equal(result.rows.length, 0);
   assert.equal(result.headerFound, false);
+});
+
+test("whole-phrase text pieces (header as 'Receipt No.', date and time together) are read just like single words", () => {
+  const fine = readTablePage(buildPage(ROWS)).rows;
+  const coarse = readTablePage(buildPage(ROWS, { coarse: true })).rows;
+  assert.equal(coarse.length, 6);
+  assert.deepEqual(
+    coarse.map((r) => ({ ...r, details: r.details })),
+    fine
+  );
+  assert.equal(coarse[0].completionTime, "2026-09-29 18:36:54");
+  assert.ok(parseStatementRows(coarse).integrityOk);
+});
+
+test("splitIntoWords splits phrases into positioned words and leaves single words alone", () => {
+  const words = splitIntoWords([
+    { str: "Receipt No.", x: 100, y: 10, width: 55 },
+    { str: "Details", x: 200, y: 10, width: 30 },
+    { str: "   ", x: 300, y: 10, width: 5 },
+  ]);
+  assert.deepEqual(words.map((w) => w.str), ["Receipt", "No.", "Details"]);
+  assert.ok(words[1].x > words[0].x);
+  assert.ok(words[0].x === 100 && words[2].x === 200);
+});
+
+test("maskText hides names, numbers and amounts but keeps the statement's own structural words", () => {
+  assert.equal(maskText("UIT3W8YRNG"), "AAA9A9AAAA");
+  assert.equal(maskText("254727***362"), "999999***999");
+  assert.equal(maskText("MAQLINE WAFULA"), "AAAAAAA AAAAAA");
+  assert.equal(maskText("Merchant Payment Online from - 254727***362"), "Merchant Payment Online from - 999999***999");
+  assert.equal(maskText("16,048.41"), "99,999.99");
+  assert.equal(maskText("Receipt No."), "Receipt No.");
+});
+
+test("the failure diagnostic shows layout but contains no names, phone numbers or amounts", () => {
+  const page = buildPage(ROWS);
+  const report = describeItemsForDebug([page]);
+  assert.ok(report.includes("header \"Receipt\" found: yes"));
+  assert.ok(!report.includes("TEST PERSON"));
+  assert.ok(!report.includes("254700"));
+  assert.ok(!report.includes("4,983.55"));
+  assert.ok(!report.includes("QAA1B2C3D4"));
 });

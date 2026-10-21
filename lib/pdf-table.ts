@@ -59,7 +59,7 @@ const COLUMN_ORDER: ColumnKey[] = [
   "other",
 ];
 
-const LINE_TOLERANCE = 2.5; // items this close in height count as "the same line"
+const LINE_TOLERANCE = 3.5; // items this close in height count as "the same line"
 const MAX_ROW_HEIGHT = 60; // a row never has text further than this below its receipt code
 const RECEIPT_RE = /^(?=.*\d)[A-Za-z0-9]{8,12}$/; // letters+digits, e.g. UIT3W8YRNG
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -70,6 +70,38 @@ function widthOf(item: PdfTextItem): number {
 }
 function centreOf(item: PdfTextItem): number {
   return item.x + widthOf(item) / 2;
+}
+
+/**
+ * PDF libraries differ in how much text they hand over as one piece: some
+ * give single words, others whole phrases ("Receipt No.", "Completion Time",
+ * even "2026-09-29 18:36:54"). Splitting every piece into words, with the
+ * position of each word estimated from its place in the text, makes the
+ * header and date detection below work either way.
+ */
+export function splitIntoWords(items: PdfTextItem[]): PdfTextItem[] {
+  const words: PdfTextItem[] = [];
+  for (const item of items) {
+    const str = item.str;
+    if (!str || str.trim() === "") continue;
+    if (!/\s/.test(str.trim())) {
+      words.push({ ...item, str: str.trim() });
+      continue;
+    }
+    const width = widthOf(item);
+    const total = str.length || 1;
+    const re = /\S+/g;
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(str)) !== null) {
+      words.push({
+        str: match[0],
+        x: item.x + (width * match.index) / total,
+        y: item.y,
+        width: (width * match[0].length) / total,
+      });
+    }
+  }
+  return words;
 }
 
 interface Header {
@@ -87,7 +119,7 @@ interface Header {
  */
 function findHeaders(items: PdfTextItem[]): Header[] {
   const headers: Header[] = [];
-  const receiptWords = items.filter((i) => i.str.trim() === "Receipt");
+  const receiptWords = items.filter((i) => i.str.trim().toLowerCase() === "receipt");
 
   for (const start of receiptWords) {
     const line = items
@@ -99,11 +131,11 @@ function findHeaders(items: PdfTextItem[]): Header[] {
     const firstWords = ["Receipt", "Completion", "Details", "Transaction", "Paid", "Withdrawn", "Balance", "Transaction", "Other"];
     let next = 0;
     for (const word of line) {
-      const text = word.str.trim();
-      if (next < firstWords.length && text === firstWords[next]) {
+      const text = word.str.trim().toLowerCase();
+      if (next < firstWords.length && text === firstWords[next].toLowerCase()) {
         labels.push([word]);
         next++;
-      } else if (labels.length > 0 && (text === "No." || text === "In" || text === "Party")) {
+      } else if (labels.length > 0 && ["no.", "no", "time", "status", "in", "type", "party"].includes(text)) {
         labels[labels.length - 1].push(word);
       }
     }
@@ -142,8 +174,9 @@ function nearestColumn(item: PdfTextItem, centres: Record<ColumnKey, number>): C
 export function detectDirection(items: PdfTextItem[]): 1 | -1 | null {
   let down = 0;
   let up = 0;
-  const dates = items.filter((i) => DATE_RE.test(i.str.trim()));
-  const times = items.filter((i) => TIME_RE.test(i.str.trim()));
+  const words = splitIntoWords(items);
+  const dates = words.filter((i) => DATE_RE.test(i.str));
+  const times = words.filter((i) => TIME_RE.test(i.str));
   for (const d of dates) {
     const t = times.find((c) => Math.abs(c.x - d.x) < 12 && Math.abs(c.y - d.y) > 3 && Math.abs(c.y - d.y) < 25);
     if (!t) continue;
@@ -177,7 +210,8 @@ export function readTablePage(
     .filter((i) => i.str && i.str.trim() !== "")
     .map((i) => ({ ...i, y: i.y * direction }));
 
-  const headers = findHeaders(items).sort((a, b) => a.y - b.y);
+  const words = splitIntoWords(items);
+  const headers = findHeaders(words).sort((a, b) => a.y - b.y);
   const centres = headers[0]?.centres ?? fallback?.centres;
 
   if (!centres) {
@@ -190,9 +224,9 @@ export function readTablePage(
   // "Statement Verification Code" in the page footer (P9XWWGK2), which has
   // the same shape as a receipt code but no date beside it.
   const hasDateOnSameLine = (anchor: PdfTextItem) =>
-    items.some(
+    words.some(
       (i) =>
-        DATE_RE.test(i.str.trim()) &&
+        DATE_RE.test(i.str) &&
         Math.abs(i.y - anchor.y) <= LINE_TOLERANCE &&
         nearestColumn(i, centres) === "completion"
     );
@@ -203,9 +237,9 @@ export function readTablePage(
   // Things that end a row early: a new header line, a section title such as
   // "Account Type - Utility Account", or the page footer.
   const barriers: number[] = headers.map((h) => h.y);
-  for (const item of items) {
-    const text = item.str.trim();
-    if (text === "Account" || text === "Disclaimer:" || text === "Disclaimer") barriers.push(item.y);
+  for (const word of words) {
+    const text = word.str.trim();
+    if (text === "Account" || text === "Disclaimer:" || text === "Disclaimer") barriers.push(word.y);
   }
   barriers.sort((a, b) => a - b);
 
@@ -267,3 +301,46 @@ export function describeRows(rows: RawStatementRow[]): string[] {
 }
 
 export { TIME_RE as PDF_TIME_RE, DATE_RE as PDF_DATE_RE };
+
+
+// ---------------------------------------------------------------------
+// Diagnostics for a PDF that opens but yields no rows. Names, phone
+// numbers and amounts are MASKED (letters become a/A, digits become 9)
+// so the shape of the layout can be shared without sharing the data.
+// ---------------------------------------------------------------------
+const STRUCTURAL_WORDS = new Set(
+  [
+    "receipt", "no.", "completion", "time", "details", "transaction", "status", "paid", "in", "withdrawn", "balance",
+    "type", "other", "party", "completed", "account", "merchant", "payment", "online", "from", "pay", "charge", "with",
+    "od", "stk", "via", "utility", "working", "charges", "mpesa", "statement", "records", "found.", "page", "of", "-",
+  ]
+);
+
+export function maskText(text: string): string {
+  return text
+    .split(/(\s+)/)
+    .map((part) => {
+      if (/^\s+$/.test(part) || STRUCTURAL_WORDS.has(part.toLowerCase())) return part;
+      return part.replace(/[0-9]/g, "9").replace(/[a-z]/g, "a").replace(/[A-Z]/g, "A");
+    })
+    .join("");
+}
+
+export function describeItemsForDebug(pages: PdfTextItem[][], maxItems = 70): string {
+  const totalItems = pages.reduce((n, p) => n + p.filter((i) => i.str.trim()).length, 0);
+  const first = (pages[0] ?? []).filter((i) => i.str.trim()).sort((a, b) => a.y - b.y || a.x - b.x);
+  const headerIndex = first.findIndex((i) => /receipt/i.test(i.str));
+  const start = headerIndex > 4 ? headerIndex - 4 : 0;
+  const sample = first
+    .slice(start, start + maxItems)
+    .map((i) => `${Math.round(i.x)}/${Math.round(i.y)}:${maskText(i.str.trim())}`)
+    .join(" ; ");
+  const wordsOnPage = splitIntoWords(pages[0] ?? []);
+  const receiptLike = wordsOnPage.filter((w) => RECEIPT_RE.test(w.str)).length;
+  const datesFound = wordsOnPage.filter((w) => DATE_RE.test(w.str)).length;
+  return (
+    `[Diagnostic: ${pages.length} page(s), ${totalItems} text pieces, ${receiptLike} receipt-like words and ` +
+    `${datesFound} dates on page 1, header "Receipt" found: ${headerIndex >= 0 ? "yes" : "no"}. ` +
+    `Layout sample (x/y:masked text): ${sample}]`
+  );
+}

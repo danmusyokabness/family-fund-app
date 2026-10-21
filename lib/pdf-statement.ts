@@ -33,7 +33,7 @@
 
 import { getDocumentProxy } from "unpdf";
 import { parseStatementTextLine } from "./pdf-statement-line.ts";
-import { describeRows, readTablePage, type PdfTextItem } from "./pdf-table.ts";
+import { describeItemsForDebug, describeRows, readTablePage, type PdfTextItem } from "./pdf-table.ts";
 import type { RawStatementRow } from "./statement-parser.ts";
 
 const Y_CLUSTER_TOLERANCE = 3;
@@ -169,6 +169,7 @@ export async function extractStatementRowsFromPdf(buffer: Buffer, password?: str
     );
   }
   throw new Error(
-    "The PDF opened, but no transactions were found in it. Check that it is an M-PESA statement for the Till, or upload it as a CSV instead."
+    "The PDF opened, but no transactions were found in it. Check that it is an M-PESA statement for the Till, or upload it as a CSV instead. " +
+      describeItemsForDebug(pages.map((p) => p.items))
   );
 }
