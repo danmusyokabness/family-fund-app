@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readTablePage, detectDirection, splitIntoWords, maskText, describeItemsForDebug, type PdfTextItem } from "../lib/pdf-table.ts";
 import { parseStatementRows } from "../lib/statement-parser.ts";
+import { matchPayment, type MemberForMatching } from "../lib/payment-matching.ts";
 
 // ---------------------------------------------------------------------
 // A fake statement page laid out like the real one first seen on
@@ -260,4 +261,104 @@ test("the failure diagnostic shows layout but contains no names, phone numbers o
   assert.ok(!report.includes("254700"));
   assert.ok(!report.includes("4,983.55"));
   assert.ok(!report.includes("QAA1B2C3D4"));
+});
+
+// ---------------------------------------------------------------------
+// TIGHTLY packed rows, like the real statement. This layout exposed a bug
+// on 21 Oct 2026: the "which way is down" check paired each date with the
+// PREVIOUS row's time, picked the wrong direction, and every wrapped line
+// (the time, the payer's name and phone) landed on the neighbouring row.
+// ---------------------------------------------------------------------
+const TIGHT_LINE = 8;
+interface TightRow {
+  receipt: string;
+  date: string;
+  time: string;
+  details: string[];
+  paidIn: string;
+  balance: string;
+}
+function buildTightPage(rows: TightRow[], flip = false): PdfTextItem[] {
+  const items: PdfTextItem[] = [];
+  const h = HEADER_CENTRES;
+  items.push(centred("Receipt No.", h.receipt, 100), centred("Completion Time", h.completion, 100), centred("Details", h.details, 100));
+  items.push(centred("Transaction Status", h.status, 100), centred("Paid In", h.paidIn, 100), centred("Withdrawn", h.withdrawn, 100));
+  items.push(centred("Balance", h.balance, 100), centred("Transaction Type", h.type, 100), centred("Other Party", h.other, 100));
+  let y = 120;
+  for (const r of rows) {
+    items.push(text(r.receipt, COL.receiptLeft, y));
+    items.push(text(r.date, COL.completionLeft, y), text(r.time, COL.completionLeft, y + TIGHT_LINE));
+    r.details.forEach((line, i) => items.push(text(line, COL.detailsLeft, y + i * TIGHT_LINE)));
+    items.push(text("Completed", COL.statusLeft, y));
+    items.push(rightAligned(r.paidIn, COL.paidInRight, y));
+    items.push(rightAligned(r.balance, COL.balanceRight, y));
+    items.push(text("Pay Merchant", COL.typeLeft, y));
+    items.push(text("1138423 -", COL.otherLeft, y), text("Test Fund", COL.otherLeft, y + TIGHT_LINE));
+    y += 3 * TIGHT_LINE + 3;
+  }
+  return flip ? items.map((i) => ({ ...i, y: 792 - i.y })) : items;
+}
+
+// Newest first, like the statement. Oldest to newest: 300 -> 1,000.00; 300 -> 1,300.00; 600 -> 1,900.00; 300 -> 2,200.00
+const TIGHT_ROWS: TightRow[] = [
+  { receipt: "QBD4D4D4D4", date: "2026-09-24", time: "08:03:16", details: ["Merchant Payment from -", "254744***555 DELTA", "FOUR"], paidIn: "300.00", balance: "2,200.00" },
+  { receipt: "QBC3C3C3C3", date: "2026-09-16", time: "06:58:35", details: ["Merchant Payment Online", "from - 254733***444", "GAMMA THREE"], paidIn: "600.00", balance: "1,900.00" },
+  { receipt: "QBB2B2B2B2", date: "2026-09-12", time: "11:48:43", details: ["Merchant Payment from -", "254711***222 BETA", "TWO"], paidIn: "300.00", balance: "1,300.00" },
+  { receipt: "QBA1A1A1A1", date: "2026-09-10", time: "14:04:37", details: ["Merchant Payment Online", "from - 254700***111", "ALPHA ONE"], paidIn: "300.00", balance: "1,000.00" },
+];
+
+test("tightly packed rows: every row keeps ITS OWN time, name and phone (regression for the shifted-rows bug)", () => {
+  for (const flip of [false, true]) {
+    const { rows } = readTablePage(buildTightPage(TIGHT_ROWS, flip));
+    assert.equal(rows.length, 4);
+    assert.deepEqual(rows.map((r) => r.completionTime), ["2026-09-24 08:03:16", "2026-09-16 06:58:35", "2026-09-12 11:48:43", "2026-09-10 14:04:37"]);
+    assert.equal(rows[0].details, "Merchant Payment from - 254744***555 DELTA FOUR");
+    assert.equal(rows[1].details, "Merchant Payment Online from - 254733***444 GAMMA THREE");
+    assert.equal(rows[3].details, "Merchant Payment Online from - 254700***111 ALPHA ONE");
+  }
+});
+
+test("detectDirection is not fooled by the previous row's time sitting close above", () => {
+  assert.equal(detectDirection(buildTightPage(TIGHT_ROWS)), 1);
+  assert.equal(detectDirection(buildTightPage(TIGHT_ROWS, true)), -1);
+});
+
+test("a caller that already knows which way is down can lock the direction instead of letting it be guessed", () => {
+  const page = buildTightPage(TIGHT_ROWS);
+  const locked = readTablePage(page, { direction: 1, lockDirection: true });
+  assert.equal(locked.direction, 1);
+  assert.equal(locked.rows.length, 4);
+  assert.equal(locked.rows[0].completionTime, "2026-09-24 08:03:16");
+});
+
+test("from PDF text all the way to the member: names and phones are extracted and matched the way the import does it", () => {
+  const { rows } = readTablePage(buildTightPage(TIGHT_ROWS), { direction: 1, lockDirection: true });
+  const parsed = parseStatementRows(rows);
+  assert.equal(parsed.integrityOk, true);
+  assert.equal(parsed.rows.length, 4);
+
+  const byReceipt = new Map(parsed.rows.map((r) => [r.receiptNo, r]));
+  assert.equal(byReceipt.get("QBA1A1A1A1")?.payerName, "ALPHA ONE");
+  assert.equal(byReceipt.get("QBA1A1A1A1")?.payerPhoneMasked, "254700***111");
+  assert.equal(byReceipt.get("QBD4D4D4D4")?.payerName, "DELTA FOUR");
+
+  const members: MemberForMatching[] = [
+    { id: "m-alpha", fullName: "Alpha One", phones: ["254700000111"], aliases: [] },
+    { id: "m-beta", fullName: "Beta Two", phones: ["254711999222"], aliases: [] },
+    { id: "m-gamma", fullName: "Gamma Stone", phones: ["254799000001"], aliases: [] }, // phone does not match the payer
+  ];
+  const outcome = (receipt: string) => {
+    const r = byReceipt.get(receipt)!;
+    return matchPayment({ payerPhoneMasked: r.payerPhoneMasked, payerName: r.payerName, payerRef: r.payerRef }, members);
+  };
+
+  // A registered phone matches and is counted straight away.
+  assert.deepEqual(outcome("QBA1A1A1A1"), { status: "matched", memberId: "m-alpha", reason: "phone match" });
+  assert.deepEqual(outcome("QBB2B2B2B2"), { status: "matched", memberId: "m-beta", reason: "phone match" });
+  // Unknown phone but a first name that matches: only a SUGGESTION, never counted on a guess.
+  const gamma = outcome("QBC3C3C3C3");
+  assert.equal(gamma.status, "needs_confirmation");
+  if (gamma.status === "needs_confirmation") assert.equal(gamma.suggestedMemberId, "m-gamma");
+  // Nothing matches: goes to the unmatched queue.
+  assert.equal(outcome("QBD4D4D4D4").status, "unmatched");
 });

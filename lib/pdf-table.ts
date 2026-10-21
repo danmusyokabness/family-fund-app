@@ -178,9 +178,23 @@ export function detectDirection(items: PdfTextItem[]): 1 | -1 | null {
   const dates = words.filter((i) => DATE_RE.test(i.str));
   const times = words.filter((i) => TIME_RE.test(i.str));
   for (const d of dates) {
-    const t = times.find((c) => Math.abs(c.x - d.x) < 12 && Math.abs(c.y - d.y) > 3 && Math.abs(c.y - d.y) < 25);
-    if (!t) continue;
-    if (t.y > d.y) down++;
+    // The NEAREST time in the same column is this date's own. (Taking the
+    // first one found is wrong: in a tightly packed table the previous
+    // row's time is also close by, and picking it flips the answer, which
+    // shifts every wrapped line onto the wrong row. Found with a real
+    // statement on 21 Oct 2026.)
+    let own: PdfTextItem | null = null;
+    let ownDistance = Infinity;
+    for (const c of times) {
+      const distance = Math.abs(c.y - d.y);
+      if (Math.abs(c.x - d.x) >= 12 || distance <= 3 || distance >= 25) continue;
+      if (distance < ownDistance) {
+        own = c;
+        ownDistance = distance;
+      }
+    }
+    if (!own) continue;
+    if (own.y > d.y) down++;
     else up++;
   }
   if (down === 0 && up === 0) return null;
@@ -202,9 +216,13 @@ export interface PageTableResult {
  */
 export function readTablePage(
   rawItems: PdfTextItem[],
-  fallback?: { centres?: Record<ColumnKey, number>; direction?: 1 | -1 }
+  fallback?: { centres?: Record<ColumnKey, number>; direction?: 1 | -1; lockDirection?: boolean }
 ): PageTableResult & { centres?: Record<ColumnKey, number>; direction: 1 | -1 } {
-  const direction = detectDirection(rawItems) ?? fallback?.direction ?? 1;
+  // When the caller already knows which way is down (lib/pdf-statement.ts
+  // flips every position to "bigger y = lower on the page" itself), it
+  // passes lockDirection and nothing is guessed.
+  const direction =
+    fallback?.lockDirection && fallback.direction ? fallback.direction : detectDirection(rawItems) ?? fallback?.direction ?? 1;
   // Normalise so that a bigger y always means "further down the page".
   const items = rawItems
     .filter((i) => i.str && i.str.trim() !== "")

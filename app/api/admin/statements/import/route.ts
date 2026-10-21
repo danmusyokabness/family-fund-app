@@ -101,7 +101,26 @@ export async function POST(req: NextRequest) {
   const newCount = rowsWithDup.filter((r) => !r.isDuplicate).length;
   const duplicateCount = rowsWithDup.length - newCount;
 
+  // Members are loaded once: the preview uses them to show who each payment
+  // WOULD be matched to, and the import below uses them to really match.
+  const members = await loadMembersForMatching();
+  const memberNameById = new Map(members.map((m) => [m.id, m.fullName]));
+
   if (!body.commit) {
+    const previewRows = rowsWithDup.map((row) => {
+      if (row.kind !== "payment") return row;
+      const outcome = matchPayment(
+        { payerPhoneMasked: row.payerPhoneMasked, payerName: row.payerName, payerRef: row.payerRef },
+        members
+      );
+      const match =
+        outcome.status === "matched"
+          ? { status: "matched" as const, memberName: memberNameById.get(outcome.memberId) ?? null, reason: outcome.reason }
+          : outcome.status === "needs_confirmation"
+            ? { status: "needs_confirmation" as const, memberName: memberNameById.get(outcome.suggestedMemberId) ?? null, reason: outcome.reason }
+            : { status: "unmatched" as const, memberName: null, reason: "no member matches this payer" };
+      return { ...row, match };
+    });
     return NextResponse.json({
       source,
       integrityOk: parsed.integrityOk,
@@ -113,7 +132,7 @@ export async function POST(req: NextRequest) {
       brokenReceipts: parsed.brokenReceipts,
       newCount,
       duplicateCount,
-      rows: rowsWithDup,
+      rows: previewRows,
       lines: debugLines,
     });
   }
@@ -125,7 +144,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const members = await loadMembersForMatching();
   let created = 0;
 
   for (const row of rowsWithDup) {

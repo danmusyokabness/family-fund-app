@@ -12,6 +12,8 @@ interface PreviewRow {
   payerPhoneMasked: string | null;
   payerRef: string | null;
   isDuplicate: boolean;
+  /** For payments only: who this payment would be counted for if imported. */
+  match?: { status: "matched" | "needs_confirmation" | "unmatched"; memberName: string | null; reason: string };
 }
 interface PreviewResult {
   source: "csv" | "pdf";
@@ -204,13 +206,25 @@ export default function StatementImport() {
 
           <div className="max-h-80 overflow-y-auto text-xs">
             {preview.rows.map((row, i) => (
-              <div key={i} className={`flex items-center justify-between px-4 py-1.5 ${i > 0 ? "border-t border-line" : ""} ${row.isDuplicate ? "opacity-50" : ""}`}>
+              <div key={i} className={`flex items-center justify-between gap-3 px-4 py-1.5 ${i > 0 ? "border-t border-line" : ""} ${row.isDuplicate ? "opacity-50" : ""}`}>
                 <span>
                   {row.completionTime} &middot; {row.kind} &middot; KES {money(row.amount)}
                   {row.payerName && <> &middot; {row.payerName}</>}
                   {row.payerPhoneMasked && <> ({row.payerPhoneMasked})</>}
                 </span>
-                {row.isDuplicate && <span className="text-ink-soft">already on file</span>}
+                {row.isDuplicate ? (
+                  <span className="text-ink-soft">already on file</span>
+                ) : row.match ? (
+                  <span
+                    className="shrink-0 text-right"
+                    style={{ color: row.match.status === "matched" ? "var(--forest)" : row.match.status === "needs_confirmation" ? "var(--ochre)" : "var(--danger)" }}
+                    title={row.match.reason}
+                  >
+                    {row.match.status === "matched" && <>&rarr; {row.match.memberName}</>}
+                    {row.match.status === "needs_confirmation" && <>to confirm: {row.match.memberName}?</>}
+                    {row.match.status === "unmatched" && <>unmatched</>}
+                  </span>
+                ) : null}
               </div>
             ))}
           </div>

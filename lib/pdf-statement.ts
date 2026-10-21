@@ -137,11 +137,13 @@ export async function extractStatementRowsFromPdf(buffer: Buffer, password?: str
 
   // ---- Strategy 1: the table reader --------------------------------------
   const tableRows: RawStatementRow[] = [];
-  let fallback: Parameters<typeof readTablePage>[1] = undefined;
+  // Positions were flipped above so that a bigger y is lower on the page,
+  // so the direction is KNOWN: it is locked rather than guessed.
+  let fallback: Parameters<typeof readTablePage>[1] = { direction: 1, lockDirection: true };
   for (const page of pages) {
     const result = readTablePage(page.items, fallback);
     tableRows.push(...result.rows);
-    fallback = { centres: result.centres, direction: result.direction };
+    fallback = { centres: result.centres, direction: 1, lockDirection: true };
   }
   if (tableRows.length > 0) {
     return { rawRows: tableRows, lines: describeRows(tableRows), method: "table" };
