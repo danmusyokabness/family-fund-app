@@ -1,7 +1,9 @@
 // lib/pdf-statement.ts
 //
 // SERVER-ONLY. Opens an (optionally password-protected) M-PESA statement
-// PDF with pdf.js-extract, hands the positioned text to lib/pdf-table.ts
+// PDF with unpdf (a build of pdf.js made for serverless hosting such as
+// Vercel: no separate worker file, no native canvas), hands the
+// positioned text to lib/pdf-table.ts
 // (which rebuilds the table rows the way a person reads them), and returns
 // rows in the same shape the CSV importer produces.
 //
@@ -18,14 +20,18 @@
 // program to read, so the original file straight from Safaricom (or the
 // CSV) must be used instead.
 //
+// HISTORY. The first version used the pdf.js-extract package. On Vercel
+// it failed with "Setting up fake worker failed: Cannot find module
+// './pdf.worker.js'" (the bundler left its helper file out), so it was
+// replaced by unpdf on 21 Oct 2026.
+//
 // VERIFICATION, stated plainly: lib/pdf-table.ts is tested with text
 // positions laid out exactly like a real statement. This file, which
-// actually opens a PDF with pdf.js-extract, has still not been run
-// against a real text-based statement, because the only real PDF
-// available (21 Oct 2026) was a picture. The first original statement
-// uploaded is the real test; use the "raw text" view to check it.
+// actually opens a PDF, has still not been run successfully against a
+// real text-based statement. The first original statement uploaded is
+// the real test; use the "raw text" view to check it.
 
-import { PDFExtract } from "pdf.js-extract";
+import { getDocumentProxy } from "unpdf";
 import { parseStatementTextLine } from "./pdf-statement-line.ts";
 import { describeRows, readTablePage, type PdfTextItem } from "./pdf-table.ts";
 import type { RawStatementRow } from "./statement-parser.ts";
@@ -74,18 +80,60 @@ function linesFromItems(page: PageItems): string[] {
   return lines;
 }
 
-export async function extractStatementRowsFromPdf(buffer: Buffer, password?: string): Promise<PdfStatementResult> {
-  const pdfExtract = new PDFExtract();
-  const data = await pdfExtract.extractBuffer(buffer, password ? { password } : {});
+/** The small part of pdf.js that is used here, written out so this file does not depend on the library's own type names. */
+interface PdfPageLike {
+  getViewport(options: { scale: number }): { height: number };
+  getTextContent(): Promise<{ items: unknown[] }>;
+}
+interface PdfDocumentLike {
+  numPages: number;
+  getPage(pageNumber: number): Promise<PdfPageLike>;
+  destroy?: () => Promise<void>;
+}
+interface PdfTextContentItem {
+  str?: string;
+  transform?: number[];
+  width?: number;
+}
 
-  const pages: PageItems[] = data.pages.map((page) => ({
-    items: (page.content as { str: string; x: number; y: number; width?: number }[]).map((c) => ({
-      str: c.str,
-      x: c.x,
-      y: c.y,
-      width: c.width,
-    })),
-  }));
+export async function extractStatementRowsFromPdf(buffer: Buffer, password?: string): Promise<PdfStatementResult> {
+  let doc: PdfDocumentLike;
+  try {
+    // A fresh copy of the bytes: pdf.js takes ownership of the array it is given.
+    const bytes = new Uint8Array(buffer.byteLength);
+    bytes.set(buffer);
+    doc = (await getDocumentProxy(bytes, password ? { password } : {})) as unknown as PdfDocumentLike;
+  } catch (error) {
+    const name = error instanceof Error ? error.name : "";
+    const message = error instanceof Error ? error.message : String(error);
+    if (name === "PasswordException" || /password/i.test(message)) {
+      throw new Error(
+        password
+          ? "The PDF password is wrong. Check it and try again."
+          : "This PDF is password-protected. Type its password in the PDF password box and try again."
+      );
+    }
+    throw error;
+  }
+
+  const pages: PageItems[] = [];
+  try {
+    for (let n = 1; n <= doc.numPages; n++) {
+      const page = await doc.getPage(n);
+      const pageHeight = page.getViewport({ scale: 1 }).height;
+      const content = await page.getTextContent();
+      const items: PdfTextItem[] = [];
+      for (const raw of content.items as PdfTextContentItem[]) {
+        if (typeof raw.str !== "string" || !raw.transform || raw.transform.length < 6) continue;
+        // pdf.js measures height from the BOTTOM of the page; flip it so
+        // that, as everywhere else in this project, a bigger y is lower down.
+        items.push({ str: raw.str, x: raw.transform[4], y: pageHeight - raw.transform[5], width: raw.width });
+      }
+      pages.push({ items });
+    }
+  } finally {
+    if (doc.destroy) await doc.destroy().catch(() => undefined);
+  }
 
   // ---- Strategy 1: the table reader --------------------------------------
   const tableRows: RawStatementRow[] = [];

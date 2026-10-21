@@ -13,9 +13,9 @@
     "@supabase/supabase-js": "^2.116.0",
     "africastalking": "^0.8.3",
     "next": "^16.3.5",
-    "pdf.js-extract": "^0.2.1",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "unpdf": "^1.9.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
