@@ -4,9 +4,13 @@
 // unchanged, EXCEPT phones: if primaryPhone or alternatePhones is
 // included, ALL of this member's phone numbers are replaced together
 // (simplest correct way to guarantee exactly one primary). Shortcodes
-// work the same way if included. Existing "masked_phone" or
-// "payer_name" aliases (learned automatically from payments in later
-// steps) are left untouched either way.
+// (till / business numbers) and maskedPhones (numbers copied from a
+// statement, like 254110***358) work the same way if included. Other
+// aliases ("payer_name") are left untouched.
+//
+// Phone numbers are checked BEFORE anything is removed, and if saving
+// still fails the old numbers are put back, so a member can never be
+// left without a phone.
 //
 // No DELETE route on purpose — deactivate (isActive: false) instead of
 // deleting, per the project's "undo, not delete" rule.
@@ -14,7 +18,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin, requireSuperAdmin } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
-import { normalizePhone } from "@/lib/phone";
+import { canonicalMaskedPhone, normalizePhone } from "@/lib/phone";
 
 function toFirstOfMonth(input: string): string | null {
   const match = /^(\d{4})-(\d{2})(?:-\d{2})?$/.exec(input.trim());
@@ -32,6 +36,7 @@ interface UpdateMemberBody {
   primaryPhone?: string;
   alternatePhones?: string[];
   shortcodes?: string[];
+  maskedPhones?: string[];
   /** Granting or removing admin access — SUPERADMIN ONLY, checked separately below. */
   isAdmin?: boolean;
 }
@@ -93,16 +98,34 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       ...new Set((body.alternatePhones ?? []).map(normalizePhone).filter(Boolean)),
     ].filter((p) => p !== primaryPhone) as string[];
 
+    const wanted = [primaryPhone, ...alternatePhones];
+
+    // 1. Refuse up front if any of these numbers already belongs to someone else.
+    const { data: clashes } = await db
+      .from("member_phones")
+      .select("phone_number, members(full_name)")
+      .in("phone_number", wanted)
+      .neq("member_id", id);
+    if (clashes && clashes.length > 0) {
+      const first = clashes[0] as unknown as { phone_number: string; members: { full_name: string } | null };
+      return NextResponse.json(
+        { error: `${first.phone_number} is already registered to ${first.members?.full_name ?? "another member"}.` },
+        { status: 409 }
+      );
+    }
+
+    // 2. Remember the old numbers, replace them, and restore them if that fails.
+    const { data: oldPhones } = await db.from("member_phones").select("phone_number, is_primary").eq("member_id", id);
     await db.from("member_phones").delete().eq("member_id", id);
     const { error } = await db.from("member_phones").insert([
       { member_id: id, phone_number: primaryPhone, is_primary: true },
       ...alternatePhones.map((phone) => ({ member_id: id, phone_number: phone, is_primary: false })),
     ]);
     if (error) {
-      return NextResponse.json(
-        { error: "Could not save phone numbers — one of them may already be registered to another member." },
-        { status: 409 }
-      );
+      if (oldPhones && oldPhones.length > 0) {
+        await db.from("member_phones").insert(oldPhones.map((p) => ({ member_id: id, phone_number: p.phone_number, is_primary: p.is_primary })));
+      }
+      return NextResponse.json({ error: "Could not save the phone numbers. Nothing was changed." }, { status: 409 });
     }
   }
 
@@ -112,6 +135,24 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (shortcodes.length > 0) {
       await db.from("payer_aliases").insert(
         shortcodes.map((value) => ({ member_id: id, alias_type: "shortcode", alias_value: value, source: "admin" }))
+      );
+    }
+  }
+
+  if (body.maskedPhones !== undefined) {
+    const masked: string[] = [];
+    for (const raw of body.maskedPhones) {
+      if (!raw.trim()) continue;
+      const canonical = canonicalMaskedPhone(raw);
+      if (!canonical) {
+        return NextResponse.json({ error: `"${raw}" is not a statement number like 254110***358.` }, { status: 400 });
+      }
+      if (!masked.includes(canonical)) masked.push(canonical);
+    }
+    await db.from("payer_aliases").delete().eq("member_id", id).eq("alias_type", "masked_phone");
+    if (masked.length > 0) {
+      await db.from("payer_aliases").insert(
+        masked.map((value) => ({ member_id: id, alias_type: "masked_phone", alias_value: value, source: "admin" }))
       );
     }
   }

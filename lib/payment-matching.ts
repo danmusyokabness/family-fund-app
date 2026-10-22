@@ -18,7 +18,7 @@
 //      nothing at all — "unmatched", with candidates listed if any
 //      exist, so the admin isn't starting from nothing.
 
-import { maskedPhoneMatches } from "./phone.ts";
+import { canonicalMaskedPhone, maskedPhoneMatches } from "./phone.ts";
 
 export interface MemberAlias {
   aliasType: "masked_phone" | "shortcode" | "payer_name";
@@ -66,6 +66,9 @@ export function matchPayment(payment: PaymentForMatching, members: MemberForMatc
   // are both strong, exact signals — the only difference is where the
   // fact came from, so they're checked together and both auto-match.)
   const strongMatches: MatchCandidate[] = [];
+  // A masked number can be written several ways (0110***358, 254110***358);
+  // compare them in one standard form so a remembered number always matches.
+  const payerMasked = payment.payerPhoneMasked ? (canonicalMaskedPhone(payment.payerPhoneMasked) ?? payment.payerPhoneMasked) : null;
 
   for (const member of members) {
     let matchedHow: string | null = null;
@@ -79,7 +82,7 @@ export function matchPayment(payment: PaymentForMatching, members: MemberForMatc
 
     if (!matchedHow && payment.payerPhoneMasked) {
       const rememberedHit = member.aliases.some(
-        (a) => a.aliasType === "masked_phone" && a.aliasValue === payment.payerPhoneMasked
+        (a) => a.aliasType === "masked_phone" && (canonicalMaskedPhone(a.aliasValue) ?? a.aliasValue) === payerMasked
       );
       if (rememberedHit) {
         matchedHow = "remembered payer";

@@ -104,3 +104,65 @@ test("a full multi-row sheet: mix of clean, warned, and skipped rows", () => {
   assert.equal(result.rows[0].rowNumber, 2);
   assert.equal(result.rows[3].rowNumber, 5);
 });
+import { planMemberMerge, sameFirstName } from "../lib/members-import.ts";
+
+test("a masked number copied from a statement becomes a payer number, not a warning", () => {
+  const csv = "Primary Member Name,Primary Phone Number,Alternate Payment Phone Number\nMarion Wafula,0722000001,254110***358";
+  const row = parseMemberImportCsv(csv).rows[0];
+  assert.deepEqual(row.maskedPhones, ["254110***358"]);
+  assert.deepEqual(row.alternatePhones, []);
+  assert.deepEqual(row.warnings, []);
+});
+
+test("one cell can hold several numbers of different kinds, separated by commas, semicolons, slashes or new lines", () => {
+  const csv = 'Name,Phone,Other\nTrizah Musyoka,0700000009,"0711111111, 0722222222; 8760493 / 0110***358"';
+  const row = parseMemberImportCsv(csv).rows[0];
+  assert.deepEqual(row.alternatePhones, ["254711111111", "254722222222"]);
+  assert.deepEqual(row.shortcodes, ["8760493"]);
+  assert.deepEqual(row.maskedPhones, ["254110***358"]);
+});
+
+test("any number of extra columns is read: three alternates, a till number and a masked number in one row", () => {
+  const csv = "Name,Phone,Alt 1,Alt 2,Alt 3,Till,Seen on statement\nJoseph Karani,0710000001,0710000002,0710000003,0710000004,1234567,254710***074";
+  const row = parseMemberImportCsv(csv).rows[0];
+  assert.deepEqual(row.alternatePhones, ["254710000002", "254710000003", "254710000004"]);
+  assert.deepEqual(row.shortcodes, ["1234567"]);
+  assert.deepEqual(row.maskedPhones, ["254710***074"]);
+});
+
+test("the same masked number written two ways is kept once", () => {
+  const csv = "Name,Phone,A,B\nAnn One,0700000001,0110***358,254110***358";
+  assert.deepEqual(parseMemberImportCsv(csv).rows[0].maskedPhones, ["254110***358"]);
+});
+
+test("planMemberMerge adds only what is new and never touches what is already there", () => {
+  const owners = new Map([["254722000001", "m1"]]);
+  const plan = planMemberMerge(
+    { alternatePhones: ["254711111111", "254722000001"], shortcodes: ["8760493", "1111111"], maskedPhones: ["254110***358"] },
+    "m1",
+    { phones: ["254722000001"], shortcodes: ["8760493"], maskedPhones: [] },
+    owners
+  );
+  assert.deepEqual(plan.addPhones, ["254711111111"]);
+  assert.deepEqual(plan.addShortcodes, ["1111111"]);
+  assert.deepEqual(plan.addMaskedPhones, ["254110***358"]);
+  assert.deepEqual(plan.phoneConflicts, []);
+});
+
+test("planMemberMerge refuses an alternate number that belongs to a different member", () => {
+  const owners = new Map([["254733333333", "someone-else"]]);
+  const plan = planMemberMerge(
+    { alternatePhones: ["254733333333"], shortcodes: [], maskedPhones: [] },
+    "m1",
+    { phones: [], shortcodes: [], maskedPhones: [] },
+    owners
+  );
+  assert.deepEqual(plan.addPhones, []);
+  assert.deepEqual(plan.phoneConflicts, ["254733333333"]);
+});
+
+test("sameFirstName: a changed surname still counts as the same person, a different first name does not", () => {
+  assert.equal(sameFirstName("Joseph Karani", "JOSEPH KATAKA"), true);
+  assert.equal(sameFirstName("Joseph Karani", "Josephine Karani"), false);
+  assert.equal(sameFirstName("", "Anyone"), false);
+});

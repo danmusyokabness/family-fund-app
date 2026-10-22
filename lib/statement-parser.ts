@@ -75,7 +75,8 @@ function extractPayer(details: string): { payerPhoneMasked: string | null; payer
   const fromMatch = /from\s*-\s*(\S+)\s+(.+)$/i.exec(details);
   if (fromMatch) {
     const token = fromMatch[1];
-    const name = fromMatch[2].trim();
+    // "from - 8760493 - NAME": drop the dash that separates a till number from the name.
+    const name = fromMatch[2].replace(/^-\s*/, "").trim();
     if (/^\d+\*+\d+$/.test(token)) {
       return { payerPhoneMasked: token, payerName: name, payerRef: null };
     }

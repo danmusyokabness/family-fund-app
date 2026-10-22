@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
     db.from("settings").select("key, value"),
     db
       .from("members")
-      .select("id, full_name, joined_on, sort_order, family_nodes(date_of_birth, deleted_at)")
+      .select("id, full_name, joined_on, sort_order, family_nodes!family_nodes_member_id_fkey(date_of_birth, deleted_at)")
       .eq("is_active", true),
   ]);
 

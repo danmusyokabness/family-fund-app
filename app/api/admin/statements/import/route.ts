@@ -145,6 +145,12 @@ export async function POST(req: NextRequest) {
   }
 
   let created = 0;
+  let failed = 0;
+  let firstError: string | null = null;
+  const fail = (receipt: string, why: string) => {
+    failed++;
+    if (!firstError) firstError = `${receipt}: ${why}`;
+  };
 
   for (const row of rowsWithDup) {
     if (row.isDuplicate) continue;
@@ -153,7 +159,8 @@ export async function POST(req: NextRequest) {
     try {
       occurredAtUtc = nairobiWallTimeToUtcIso(row.completionTime);
     } catch {
-      continue; // an unparseable timestamp is skipped rather than guessed at
+      fail(row.receiptNo, `the time "${row.completionTime}" could not be understood`); // never guessed at
+      continue;
     }
 
     if (row.kind === "payment") {
@@ -181,7 +188,10 @@ export async function POST(req: NextRequest) {
         .insert({
           amount: row.amount,
           kind: "mpesa",
-          source,
+          // NOT the file type ("pdf"/"csv"): the payments table only allows
+          // statement / daraja / admin here. Saving "pdf" broke every payment
+          // silently on 21 Oct 2026 (only the charges were saved).
+          source: "statement",
           mpesa_receipt: row.receiptNo,
           payer_name: row.payerName,
           payer_phone_masked: row.payerPhoneMasked,
@@ -195,10 +205,23 @@ export async function POST(req: NextRequest) {
         .select("id")
         .single();
 
-      if (error || !payment) continue; // most likely a duplicate receipt the pre-check missed — the database's own unique constraint protects it either way
+      if (error || !payment) {
+        // A duplicate receipt the pre-check missed is protected by the database itself and is not a failure.
+        if (error?.code !== "23505") fail(row.receiptNo, error?.message ?? "the payment could not be saved");
+        continue;
+      }
 
       if (matchStatus === "matched" && matchedMemberId) {
-        await db.from("payment_allocations").insert({ payment_id: payment.id, member_id: matchedMemberId, amount: row.amount });
+        const { error: allocationError } = await db
+          .from("payment_allocations")
+          .insert({ payment_id: payment.id, member_id: matchedMemberId, amount: row.amount });
+        if (allocationError) {
+          // A matched payment with no allocation would be saved but never counted.
+          // Take it back out so a retry can do it properly.
+          await db.from("payments").delete().eq("id", payment.id);
+          fail(row.receiptNo, allocationError.message);
+          continue;
+        }
       }
       created++;
     } else {
@@ -210,7 +233,8 @@ export async function POST(req: NextRequest) {
         mpesa_receipt: row.receiptNo,
         description: row.details,
       });
-      if (!error) created++;
+      if (error) fail(row.receiptNo, error.message);
+      else created++;
     }
   }
 
@@ -226,8 +250,9 @@ export async function POST(req: NextRequest) {
     closing_balance_reported: parsed.reportedClosingBalance,
     closing_balance_calculated: parsed.calculatedClosingBalance,
     integrity_ok: parsed.integrityOk,
-    status: "confirmed",
+    status: failed === 0 ? "confirmed" : "failed",
+    note: failed === 0 ? null : `${failed} row(s) could not be saved. First problem: ${firstError}`,
   });
 
-  return NextResponse.json({ ok: true, created, skippedDuplicates: duplicateCount });
+  return NextResponse.json({ ok: true, created, skippedDuplicates: duplicateCount, failed, firstError });
 }

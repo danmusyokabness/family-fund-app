@@ -95,3 +95,32 @@ test("an empty member list never throws, just returns unmatched", () => {
   const outcome = matchPayment({ payerPhoneMasked: "254712***772", payerName: "Someone", payerRef: null }, []);
   assert.deepEqual(outcome, { status: "unmatched", candidates: [] });
 });
+
+test("a remembered masked number matches however the statement prints it (254110***358 or 0110***358)", () => {
+  const members = [member("marion", "Marion Wafula", ["254722000001"], [{ aliasType: "masked_phone", aliasValue: "254110***358" }])];
+  for (const printed of ["254110***358", "0110***358"]) {
+    const outcome = matchPayment({ payerPhoneMasked: printed, payerName: "SOMEONE ELSE", payerRef: null }, members);
+    assert.equal(outcome.status, "matched");
+    if (outcome.status === "matched") assert.equal(outcome.memberId, "marion");
+  }
+});
+
+test("a remembered masked number typed with a leading 0 still matches the 254 form on the statement", () => {
+  const members = [member("marion", "Marion Wafula", [], [{ aliasType: "masked_phone", aliasValue: "0110***358" }])];
+  const outcome = matchPayment({ payerPhoneMasked: "254110***358", payerName: null, payerRef: null }, members);
+  assert.equal(outcome.status, "matched");
+});
+
+test("two members who both remember the same masked number are ambiguous, not guessed", () => {
+  const alias = [{ aliasType: "masked_phone" as const, aliasValue: "254110***358" }];
+  const members = [member("a", "Ann One", [], alias), member("b", "Bea Two", [], alias)];
+  const outcome = matchPayment({ payerPhoneMasked: "254110***358", payerName: null, payerRef: null }, members);
+  assert.equal(outcome.status, "unmatched");
+});
+
+test("a payment from a member's till number matches through the number on file", () => {
+  const members = [member("trizah", "Trizah Musyoka", ["254700000009"], [{ aliasType: "shortcode", aliasValue: "8760493" }])];
+  const outcome = matchPayment({ payerPhoneMasked: null, payerName: "SOME SHOP LTD", payerRef: "8760493" }, members);
+  assert.equal(outcome.status, "matched");
+  if (outcome.status === "matched") assert.equal(outcome.reason, "business number on file");
+});

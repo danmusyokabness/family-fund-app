@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
-import { normalizePhone } from "@/lib/phone";
+import { canonicalMaskedPhone, normalizePhone } from "@/lib/phone";
 
 function toFirstOfMonth(input: string): string | null {
   const match = /^(\d{4})-(\d{2})(?:-\d{2})?$/.exec(input.trim());
@@ -28,7 +28,9 @@ export async function GET() {
       "id, full_name, joined_on, is_active, is_admin, notes, created_at, sort_order, " +
         "member_phones(id, phone_number, is_primary), " +
         "payer_aliases(id, alias_type, alias_value), " +
-        "family_nodes(date_of_birth, deleted_at)"
+        // "!family_nodes_member_id_fkey" names WHICH link between the tree and members to follow.
+        // Without it the database refuses (two links exist), which broke this list on 21 Oct 2026.
+        "family_nodes!family_nodes_member_id_fkey(date_of_birth, deleted_at)"
     )
     .order("full_name", { ascending: true });
 
@@ -44,6 +46,8 @@ interface CreateMemberBody {
   primaryPhone?: string;
   alternatePhones?: string[];
   shortcodes?: string[];
+  /** Numbers copied from a statement, like 254110***358. */
+  maskedPhones?: string[];
   notes?: string;
 }
 
@@ -79,6 +83,16 @@ export async function POST(req: NextRequest) {
 
   const shortcodes = [...new Set((body.shortcodes ?? []).map((s) => s.trim()).filter(Boolean))];
 
+  const maskedPhones: string[] = [];
+  for (const raw of body.maskedPhones ?? []) {
+    if (!raw.trim()) continue;
+    const masked = canonicalMaskedPhone(raw);
+    if (!masked) {
+      return NextResponse.json({ error: `"${raw}" is not a statement number like 254110***358.` }, { status: 400 });
+    }
+    if (!maskedPhones.includes(masked)) maskedPhones.push(masked);
+  }
+
   const db = supabaseAdmin();
 
   const { data: member, error: memberError } = await db
@@ -108,15 +122,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  if (shortcodes.length > 0) {
-    await db.from("payer_aliases").insert(
-      shortcodes.map((value) => ({
-        member_id: member.id,
-        alias_type: "shortcode",
-        alias_value: value,
-        source: "admin",
-      }))
-    );
+  const aliasRows = [
+    ...shortcodes.map((value) => ({ member_id: member.id, alias_type: "shortcode", alias_value: value, source: "admin" })),
+    ...maskedPhones.map((value) => ({ member_id: member.id, alias_type: "masked_phone", alias_value: value, source: "admin" })),
+  ];
+  if (aliasRows.length > 0) {
+    await db.from("payer_aliases").insert(aliasRows);
   }
 
   return NextResponse.json({ ok: true, member });

@@ -81,3 +81,20 @@ test("the dashboard ledger rows use the same ordering, including the admin's man
   });
   assert.deepEqual(result.rows.map((r) => r.memberId), ["k1", "u2", "u1"]);
 });
+
+// ---------------------------------------------------------------------
+// Guard for a bug found on 21 Oct 2026: db/004 added a SECOND link from
+// the family tree to members (created_by_member_id), so asking the
+// database to join members with family_nodes became ambiguous and the
+// Members list and the dashboard both failed with a server error. Every
+// such join must name the link it follows.
+// ---------------------------------------------------------------------
+import { readFileSync } from "node:fs";
+
+test("every members-to-family_nodes join names the link it follows, so a second link can never break it", () => {
+  for (const file of ["../app/api/dashboard/route.ts", "../app/api/admin/members/route.ts"]) {
+    const source = readFileSync(new URL(file, import.meta.url), "utf8");
+    assert.ok(source.includes("family_nodes!family_nodes_member_id_fkey("), `${file} must use family_nodes!family_nodes_member_id_fkey(...)`);
+    assert.ok(!/[^!_a-z]family_nodes\(/.test(source.replace(/\/\/.*$/gm, "")), `${file} still has an unnamed family_nodes( join`);
+  }
+});

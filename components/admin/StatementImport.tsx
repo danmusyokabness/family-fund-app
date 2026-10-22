@@ -51,7 +51,7 @@ export default function StatementImport() {
   const [previewing, setPreviewing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ created: number; skippedDuplicates: number } | null>(null);
+  const [result, setResult] = useState<{ created: number; skippedDuplicates: number; failed?: number; firstError?: string | null } | null>(null);
   const [showLines, setShowLines] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -170,8 +170,22 @@ export default function StatementImport() {
 
         {error && <p className="text-sm text-danger">{error}</p>}
         {result && (
-          <div className="rounded-md border px-3 py-2 text-sm" style={{ borderColor: "var(--forest)", background: "var(--forest-soft)", color: "var(--forest)" }}>
+          <div
+            className="rounded-md border px-3 py-2 text-sm"
+            style={
+              result.failed
+                ? { borderColor: "var(--danger)", background: "var(--paper)", color: "var(--danger)" }
+                : { borderColor: "var(--forest)", background: "var(--forest-soft)", color: "var(--forest)" }
+            }
+          >
             Imported {result.created} row(s). {result.skippedDuplicates} already on file, skipped.
+            {result.failed ? (
+              <>
+                {" "}
+                <strong>{result.failed} row(s) could NOT be saved.</strong> First problem: {result.firstError}. Preview and import the same
+                file again once this is fixed: rows already saved are skipped, so nothing is counted twice.
+              </>
+            ) : null}
           </div>
         )}
       </div>

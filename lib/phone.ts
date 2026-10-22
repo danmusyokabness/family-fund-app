@@ -90,3 +90,23 @@ export function maskedPhoneMatches(masked: string, fullPhoneCanonical: string): 
 
   return fullPhoneCanonical.startsWith(prefix) && fullPhoneCanonical.endsWith(trailing);
 }
+
+/**
+ * M-PESA statements show payers' numbers partly hidden, like
+ * "254727***905" or "0740***425". This writes any such number in ONE
+ * standard form ("254" + the visible start, three stars, the visible end)
+ * so a number typed one way matches the same number printed another way:
+ *   "0110***358", "+254110***358" and "254110***358" are all the same.
+ * Returns null for anything that is not a masked Kenyan mobile number.
+ */
+export function canonicalMaskedPhone(input: string): string | null {
+  const m = /^\+?(\d+)\*{2,}(\d+)$/.exec(input.trim().replace(/\s+/g, ""));
+  if (!m) return null;
+  let leading = m[1];
+  const trailing = m[2];
+  if (leading.startsWith("0")) leading = "254" + leading.slice(1);
+  if (!/^254[17]/.test(leading)) return null;
+  if (trailing.length < 2) return null;
+  if (leading.length + trailing.length >= 12) return null; // nothing would be hidden
+  return `${leading}***${trailing}`;
+}

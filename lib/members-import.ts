@@ -15,14 +15,15 @@
 // silently dropped or silently guessed at.
 
 import { parseCsvWithHeader, findColumn } from "./csv.ts";
-import { normalizePhone } from "./phone.ts";
+import { canonicalMaskedPhone, normalizePhone } from "./phone.ts";
 
 export interface ParsedMemberRow {
   rowNumber: number; // 1-based, matching a spreadsheet row (header = row 1)
   fullName: string;
   primaryPhone: string | null; // normalised, or null if invalid/missing
   alternatePhones: string[]; // normalised
-  shortcodes: string[]; // e.g. an M-PESA business number, kept as typed
+  shortcodes: string[]; // e.g. an M-PESA business number or till number, kept as typed
+  maskedPhones: string[]; // numbers copied from a statement, e.g. "254110***358" (standard form)
   warnings: string[]; // non-fatal: row is still importable
   errors: string[]; // fatal: this row will be skipped
 }
@@ -64,10 +65,25 @@ export function parseMemberImportCsv(csvText: string): ParseMemberImportResult {
 
     const alternatePhones: string[] = [];
     const shortcodes: string[] = [];
+    const maskedPhones: string[] = [];
 
+    // A cell may hold several numbers, separated by a comma, semicolon,
+    // slash, bar or new line. Every column after name and primary phone
+    // is read, so there is no limit on how many alternates a row can have.
+    const cells: { col: string; value: string }[] = [];
     for (const col of extraColumns) {
-      const value = rawRow[col]?.trim();
-      if (!value) continue;
+      for (const part of (rawRow[col] ?? "").split(/[,;|/\n]+/)) {
+        const value = part.trim();
+        if (value) cells.push({ col, value });
+      }
+    }
+
+    for (const { col, value } of cells) {
+      const masked = canonicalMaskedPhone(value);
+      if (masked) {
+        if (!maskedPhones.includes(masked)) maskedPhones.push(masked);
+        continue;
+      }
 
       const normalized = normalizePhone(value);
       if (normalized) {
@@ -84,7 +100,7 @@ export function parseMemberImportCsv(csvText: string): ParseMemberImportResult {
       // Not a valid phone. A short run of digits (an M-PESA business/
       // shortcode number, e.g. "8760493") is still useful to keep.
       if (/^\d{5,9}$/.test(value)) {
-        shortcodes.push(value);
+        if (!shortcodes.includes(value)) shortcodes.push(value);
         continue;
       }
 
@@ -97,6 +113,7 @@ export function parseMemberImportCsv(csvText: string): ParseMemberImportResult {
       primaryPhone,
       alternatePhones,
       shortcodes,
+      maskedPhones,
       warnings,
       errors,
     };
@@ -110,4 +127,54 @@ export function parseMemberImportCsv(csvText: string): ParseMemberImportResult {
     importableCount,
     skippedCount: rows.length - importableCount,
   };
+}
+
+// ---------------------------------------------------------------------
+// Re-importing a sheet for members who ALREADY exist must not skip them
+// (that left no way to add a newly found number). Instead the new
+// numbers are added to the existing member and nothing is ever removed.
+// ---------------------------------------------------------------------
+export interface ExistingMemberState {
+  phones: string[]; // every registered phone, canonical
+  shortcodes: string[];
+  maskedPhones: string[]; // standard form
+}
+
+export interface MergePlan {
+  addPhones: string[];
+  addShortcodes: string[];
+  addMaskedPhones: string[];
+  /** Alternate numbers that already belong to a DIFFERENT member, so cannot be added. */
+  phoneConflicts: string[];
+}
+
+/**
+ * @param phoneOwners  phone number -> id of the member it belongs to (for every member)
+ */
+export function planMemberMerge(
+  row: Pick<ParsedMemberRow, "alternatePhones" | "shortcodes" | "maskedPhones">,
+  memberId: string,
+  existing: ExistingMemberState,
+  phoneOwners: Map<string, string>
+): MergePlan {
+  const addPhones: string[] = [];
+  const phoneConflicts: string[] = [];
+  for (const phone of row.alternatePhones) {
+    if (existing.phones.includes(phone)) continue;
+    const owner = phoneOwners.get(phone);
+    if (owner && owner !== memberId) phoneConflicts.push(phone);
+    else addPhones.push(phone);
+  }
+  return {
+    addPhones,
+    addShortcodes: row.shortcodes.filter((c) => !existing.shortcodes.includes(c)),
+    addMaskedPhones: row.maskedPhones.filter((m) => !existing.maskedPhones.includes(m)),
+    phoneConflicts,
+  };
+}
+
+/** True when a name from the sheet plausibly refers to the same person as a registered name (first names agree). */
+export function sameFirstName(a: string, b: string): boolean {
+  const first = (n: string) => n.trim().toLowerCase().split(/\s+/)[0] ?? "";
+  return first(a) !== "" && first(a) === first(b);
 }

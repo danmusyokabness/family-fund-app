@@ -62,3 +62,21 @@ test("maskedPhoneMatches: rejects when the visible parts would cover the whole n
   // A degenerate "mask" that reveals everything isn't really a mask — don't match on it.
   assert.equal(maskedPhoneMatches("254727533***905", "254727533905"), false);
 });
+
+import { canonicalMaskedPhone } from "../lib/phone.ts";
+
+test("canonicalMaskedPhone writes a masked number one standard way, however it was typed", () => {
+  assert.equal(canonicalMaskedPhone("254110***358"), "254110***358");
+  assert.equal(canonicalMaskedPhone("0110***358"), "254110***358");
+  assert.equal(canonicalMaskedPhone("+254110***358"), "254110***358");
+  assert.equal(canonicalMaskedPhone(" 254 110 *** 358 "), "254110***358");
+  assert.equal(canonicalMaskedPhone("0740*****425"), "254740***425");
+});
+
+test("canonicalMaskedPhone refuses anything that is not a masked Kenyan mobile number", () => {
+  assert.equal(canonicalMaskedPhone("254110358"), null); // no mask
+  assert.equal(canonicalMaskedPhone("0312***358"), null); // not a mobile prefix
+  assert.equal(canonicalMaskedPhone("254110***3"), null); // too little visible at the end
+  assert.equal(canonicalMaskedPhone("2541103***58999"), null); // nothing would be hidden
+  assert.equal(canonicalMaskedPhone("hello"), null);
+});

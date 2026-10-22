@@ -129,3 +129,36 @@ test("an empty statement does not crash", () => {
   assert.equal(result.reportedClosingBalance, null);
   assert.equal(result.integrityOk, false);
 });
+
+
+// ---------------------------------------------------------------------
+// Guard for a bug found on 21 Oct 2026: the import saved payments with
+// source "pdf", but the payments table only allows statement / daraja /
+// admin, so every payment was rejected and silently skipped (only the
+// bank charges, which have no such column, were saved).
+// ---------------------------------------------------------------------
+import { readFileSync } from "node:fs";
+
+test("the statement import saves payments with a source value the database allows", () => {
+  const schema = readFileSync(new URL("../db/001_schema.sql", import.meta.url), "utf8");
+  const allowed = /source\s+text not null check \(source in \('statement', 'daraja', 'admin'\)\)/.test(schema);
+  assert.ok(allowed, "db/001_schema.sql no longer lists statement/daraja/admin for payments.source: update this test and the import route together");
+
+  const route = readFileSync(new URL("../app/api/admin/statements/import/route.ts", import.meta.url), "utf8");
+  const paymentsInsert = route.slice(route.indexOf('.from("payments")'), route.indexOf('.select("id")'));
+  assert.ok(/source:\s*"statement"/.test(paymentsInsert), 'the payments insert must use source: "statement"');
+});
+
+test("the statement import reports rows it could not save instead of skipping them silently", () => {
+  const route = readFileSync(new URL("../app/api/admin/statements/import/route.ts", import.meta.url), "utf8");
+  assert.ok(route.includes("failed"), "the import response must say how many rows failed");
+  assert.ok(route.includes("firstError"), "the import response must say why the first failure happened");
+});
+
+test("a till number followed by a dash and the name is read as the till number plus a clean name", () => {
+  const result = parseStatementRows([
+    row({ completionTime: "2026-09-20 10:00:00", receiptNo: "T1", details: "Merchant Payment from - 8760493 - TRIZAH MUSYOKA", paidIn: "500.00", balance: "500.00" }),
+  ]);
+  assert.equal(result.rows[0].payerRef, "8760493");
+  assert.equal(result.rows[0].payerName, "TRIZAH MUSYOKA");
+});

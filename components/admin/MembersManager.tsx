@@ -42,6 +42,7 @@ interface ParsedRow {
   primaryPhone: string | null;
   alternatePhones: string[];
   shortcodes: string[];
+  maskedPhones?: string[];
   warnings: string[];
   errors: string[];
 }
@@ -52,12 +53,13 @@ interface PreviewResult {
 }
 interface CommitResult {
   createdCount: number;
+  updatedCount?: number;
   skippedCount: number;
-  results: { rowNumber: number; fullName: string; status: "created" | "skipped"; reason?: string }[];
+  results: { rowNumber: number; fullName: string; status: "created" | "updated" | "skipped"; reason?: string }[];
 }
 
 function splitList(input: string): string[] {
-  return input.split(",").map((s) => s.trim()).filter(Boolean);
+  return input.split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean);
 }
 function monthKeyFromDateString(dateStr: string): string {
   return dateStr.slice(0, 7);
@@ -82,6 +84,7 @@ export default function MembersManager() {
   const [newPrimaryPhone, setNewPrimaryPhone] = useState("");
   const [newAlternatePhones, setNewAlternatePhones] = useState("");
   const [newShortcodes, setNewShortcodes] = useState("");
+  const [newMaskedPhones, setNewMaskedPhones] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
@@ -92,6 +95,7 @@ export default function MembersManager() {
   const [editPrimaryPhone, setEditPrimaryPhone] = useState("");
   const [editAlternatePhones, setEditAlternatePhones] = useState("");
   const [editShortcodes, setEditShortcodes] = useState("");
+  const [editMaskedPhones, setEditMaskedPhones] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
 
@@ -186,6 +190,7 @@ export default function MembersManager() {
           primaryPhone: newPrimaryPhone,
           alternatePhones: splitList(newAlternatePhones),
           shortcodes: splitList(newShortcodes),
+          maskedPhones: splitList(newMaskedPhones),
         }),
       });
       const data = await res.json();
@@ -195,6 +200,7 @@ export default function MembersManager() {
       setNewPrimaryPhone("");
       setNewAlternatePhones("");
       setNewShortcodes("");
+      setNewMaskedPhones("");
       setShowAddForm(false);
       await loadMembers();
     } catch (err) {
@@ -213,6 +219,7 @@ export default function MembersManager() {
     setEditPrimaryPhone(primary?.phone_number ?? "");
     setEditAlternatePhones(alternates.map((p) => p.phone_number).join(", "));
     setEditShortcodes(member.payer_aliases.filter((a) => a.alias_type === "shortcode").map((a) => a.alias_value).join(", "));
+    setEditMaskedPhones(member.payer_aliases.filter((a) => a.alias_type === "masked_phone").map((a) => a.alias_value).join(", "));
     setEditError(null);
   }
 
@@ -231,6 +238,7 @@ export default function MembersManager() {
           primaryPhone: editPrimaryPhone,
           alternatePhones: splitList(editAlternatePhones),
           shortcodes: splitList(editShortcodes),
+          maskedPhones: splitList(editMaskedPhones),
         }),
       });
       const data = await res.json();
@@ -366,7 +374,8 @@ export default function MembersManager() {
             <input value={newPrimaryPhone} onChange={(e) => setNewPrimaryPhone(e.target.value)} placeholder="07..." className={`${inputCls} w-full`} required />
           </div>
           <input value={newAlternatePhones} onChange={(e) => setNewAlternatePhones(e.target.value)} placeholder="Alternate phones, comma separated" className={`${inputCls} sm:col-span-2`} />
-          <input value={newShortcodes} onChange={(e) => setNewShortcodes(e.target.value)} placeholder="Business/shortcode numbers, comma separated" className={`${inputCls} sm:col-span-2`} />
+          <input value={newShortcodes} onChange={(e) => setNewShortcodes(e.target.value)} placeholder="Till / business numbers they pay from, comma separated" className={`${inputCls} sm:col-span-2`} />
+          <input value={newMaskedPhones} onChange={(e) => setNewMaskedPhones(e.target.value)} placeholder="Numbers as shown on statements, e.g. 254110***358, comma separated" className={`${inputCls} sm:col-span-2`} />
           {addError && <p className="text-xs text-danger sm:col-span-2">{addError}</p>}
           <button type="submit" disabled={adding} className="btn-primary px-4 py-1.5 text-sm sm:col-span-2 sm:w-fit">
             {adding ? "Adding..." : "Add member"}
@@ -378,8 +387,10 @@ export default function MembersManager() {
       {showImport && (
         <div className="paper-card space-y-3 p-4">
           <p className="text-sm text-ink-soft">
-            Upload a CSV with a name column and a primary phone column. Other columns are read as alternate
-            phones or business numbers automatically. Nothing is saved until you confirm.
+            Upload a CSV with a name column and a primary phone column. Every other column is read automatically as an
+            alternate phone, a till/business number, or a number copied from a statement (like 254110***358). A cell can
+            hold several, separated by commas. Members who already exist are NOT skipped: any new numbers are added to
+            them, and nothing is ever removed. Nothing is saved until you confirm.
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <input
@@ -444,7 +455,32 @@ export default function MembersManager() {
 
           {commitResult && (
             <div className="rounded-md border border-forest/30 bg-forest-soft px-3 py-2 text-sm text-forest">
-              Created {commitResult.createdCount} member(s), skipped {commitResult.skippedCount}.
+              <p>
+                Created {commitResult.createdCount} member(s), updated {commitResult.updatedCount ?? 0} existing member(s), skipped{" "}
+                {commitResult.skippedCount}.
+              </p>
+              {commitResult.results.filter((r) => r.reason && r.status !== "skipped").length > 0 && (
+                <ul className="mt-1 list-disc pl-5 text-xs">
+                  {commitResult.results
+                    .filter((r) => r.reason && r.status !== "skipped")
+                    .map((r) => (
+                      <li key={r.rowNumber}>
+                        {r.fullName}: {r.reason}
+                      </li>
+                    ))}
+                </ul>
+              )}
+              {commitResult.results.filter((r) => r.status === "skipped" && r.reason && r.reason !== "Already up to date.").length > 0 && (
+                <ul className="mt-1 list-disc pl-5 text-xs" style={{ color: "var(--ochre)" }}>
+                  {commitResult.results
+                    .filter((r) => r.status === "skipped" && r.reason && r.reason !== "Already up to date.")
+                    .map((r) => (
+                      <li key={r.rowNumber}>
+                        {r.fullName}: skipped. {r.reason}
+                      </li>
+                    ))}
+                </ul>
+              )}
             </div>
           )}
         </div>
@@ -472,7 +508,8 @@ export default function MembersManager() {
                 <input type="month" value={editJoinedOn} onChange={(e) => setEditJoinedOn(e.target.value)} className={inputCls} />
                 <input value={editPrimaryPhone} onChange={(e) => setEditPrimaryPhone(e.target.value)} className={inputCls} placeholder="Primary phone" />
                 <input value={editAlternatePhones} onChange={(e) => setEditAlternatePhones(e.target.value)} className={`${inputCls} sm:col-span-2`} placeholder="Alternate phones, comma separated" />
-                <input value={editShortcodes} onChange={(e) => setEditShortcodes(e.target.value)} className={`${inputCls} sm:col-span-2`} placeholder="Business/shortcode numbers, comma separated" />
+                <input value={editShortcodes} onChange={(e) => setEditShortcodes(e.target.value)} className={`${inputCls} sm:col-span-2`} placeholder="Till / business numbers they pay from, comma separated" />
+                <input value={editMaskedPhones} onChange={(e) => setEditMaskedPhones(e.target.value)} className={`${inputCls} sm:col-span-2`} placeholder="Numbers as shown on statements, e.g. 254110***358, comma separated" />
                 {editError && <p className="text-xs text-danger sm:col-span-2">{editError}</p>}
                 <div className="flex gap-2 sm:col-span-2">
                   <button type="submit" disabled={savingEdit} className="btn-primary px-3 py-1 text-xs">
