@@ -270,3 +270,83 @@ test("no statement ever imported counts as stale; a limit of 0 turns the hold of
 test("the import-age limit is a real setting with a safe default", async () => {
   assert.equal(mergeSettingsWithDefaults({}).auto_send_max_import_age_days, "4");
 });
+
+// ---------------------------------------------------------------------
+// lib/health.ts: the checks behind the Health tab
+// ---------------------------------------------------------------------
+import { buildHealthChecks, overallStatus, nextScheduledDate, type HealthInput } from "../lib/health.ts";
+
+const NOW = "2026-10-22T09:00:00.000Z";
+const hoursBefore = (h: number) => new Date(new Date(NOW).getTime() - h * 3600 * 1000).toISOString();
+const HEALTHY: HealthInput = {
+  now: NOW,
+  lastDailyRun: { startedAt: hoursBefore(5), ok: true, details: { reminders: null, report: null } },
+  smsLive: true,
+  atConfigured: true,
+  freshness: { ageDays: 1, maxAgeDays: 4, stale: false },
+  needsConfirmation: 0,
+  unmatched: 0,
+  membersWithoutPhone: [],
+  lastBackupAt: hoursBefore(24 * 3),
+};
+const statusOfCheck = (input: HealthInput, key: string) => buildHealthChecks(input).find((c) => c.key === key)?.status;
+
+test("health: everything in order is all green", () => {
+  const checks = buildHealthChecks(HEALTHY);
+  assert.ok(checks.every((c) => c.status === "ok"), JSON.stringify(checks.filter((c) => c.status !== "ok")));
+  assert.equal(overallStatus(checks), "ok");
+});
+
+test("health: the daily job is amber if it never ran or went quiet, red if its last run failed", () => {
+  assert.equal(statusOfCheck({ ...HEALTHY, lastDailyRun: null }, "daily_job"), "warn");
+  assert.equal(statusOfCheck({ ...HEALTHY, lastDailyRun: { startedAt: hoursBefore(60), ok: true, details: null } }, "daily_job"), "warn");
+  const failed = buildHealthChecks({ ...HEALTHY, lastDailyRun: { startedAt: hoursBefore(2), ok: false, details: { error: "reminders: boom" } } }).find((c) => c.key === "daily_job");
+  assert.equal(failed?.status, "bad");
+  assert.ok(failed?.detail.includes("boom"));
+});
+
+test("health: an automatic text that was held back for old data is surfaced with its reason", () => {
+  const input: HealthInput = { ...HEALTHY, lastDailyRun: { startedAt: hoursBefore(3), ok: true, details: { reminders: { held: "The last statement import was 9 day(s) ago." }, report: null } } };
+  const held = buildHealthChecks(input).find((c) => c.key === "held");
+  assert.equal(held?.status, "warn");
+  assert.ok(held?.detail.includes("9 day(s) ago"));
+});
+
+test("health: old or missing payment data is amber", () => {
+  assert.equal(statusOfCheck({ ...HEALTHY, freshness: { ageDays: 9, maxAgeDays: 4, stale: true } }, "freshness"), "warn");
+  assert.equal(statusOfCheck({ ...HEALTHY, freshness: { ageDays: null, maxAgeDays: 4, stale: true } }, "freshness"), "warn");
+});
+
+test("health: texting is red when live without credentials, amber when switched off, green when ready", () => {
+  assert.equal(statusOfCheck({ ...HEALTHY, smsLive: true, atConfigured: false }, "sms"), "bad");
+  assert.equal(statusOfCheck({ ...HEALTHY, smsLive: false }, "sms"), "warn");
+  assert.equal(statusOfCheck(HEALTHY, "sms"), "ok");
+});
+
+test("health: payments waiting and members without a phone are listed in plain words", () => {
+  const checks = buildHealthChecks({ ...HEALTHY, needsConfirmation: 2, unmatched: 1, membersWithoutPhone: ["Ann One", "Bea Two"] });
+  const waiting = checks.find((c) => c.key === "waiting");
+  assert.equal(waiting?.status, "warn");
+  assert.ok(waiting?.detail.includes("2 need confirming") && waiting.detail.includes("1 are unmatched"));
+  const noPhone = checks.find((c) => c.key === "no_phone");
+  assert.ok(noPhone?.detail.includes("Ann One, Bea Two"));
+});
+
+test("health: a backup is amber if never taken or over 35 days old", () => {
+  assert.equal(statusOfCheck({ ...HEALTHY, lastBackupAt: null }, "backup"), "warn");
+  assert.equal(statusOfCheck({ ...HEALTHY, lastBackupAt: hoursBefore(24 * 40) }, "backup"), "warn");
+  assert.equal(statusOfCheck({ ...HEALTHY, lastBackupAt: hoursBefore(24 * 34) }, "backup"), "ok");
+});
+
+test("health: the overall status is the worst single check", () => {
+  assert.equal(overallStatus([{ key: "a", label: "a", status: "ok", detail: "" }, { key: "b", label: "b", status: "warn", detail: "" }]), "warn");
+  assert.equal(overallStatus([{ key: "a", label: "a", status: "warn", detail: "" }, { key: "b", label: "b", status: "bad", detail: "" }]), "bad");
+});
+
+test("nextScheduledDate: this month if the day has not passed (today counts), otherwise next month, across a year end", () => {
+  assert.equal(nextScheduledDate("2026-10-03", 7), "2026-10-07");
+  assert.equal(nextScheduledDate("2026-10-07", 7), "2026-10-07");
+  assert.equal(nextScheduledDate("2026-10-22", 7), "2026-11-07");
+  assert.equal(nextScheduledDate("2026-12-22", 15), "2027-01-15");
+  assert.equal(nextScheduledDate("2026-10-22", 31), "2026-10-28"); // clamped so it exists in every month
+});

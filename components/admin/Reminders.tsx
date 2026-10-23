@@ -287,8 +287,20 @@ export default function Reminders() {
                       <span className="font-medium">
                         {m.fullName} {m.phone && <span className="text-xs font-normal text-ink-soft">{m.phone}</span>}
                       </span>
-                      <span className="text-xs" style={{ color: m.status === "ready" ? "var(--forest)" : "var(--ink-soft)" }}>
-                        {STATUS_LABEL[m.status]}
+                      <span className="flex items-center gap-3 text-xs">
+                        {m.status === "ready" && m.phone && (
+                          <a
+                            href={`https://wa.me/${m.phone}?text=${encodeURIComponent(m.message)}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="link"
+                            onClick={(e) => e.stopPropagation()}
+                            title="Opens WhatsApp with this message ready to send, for when SMS is not available"
+                          >
+                            WhatsApp
+                          </a>
+                        )}
+                        <span style={{ color: m.status === "ready" ? "var(--forest)" : "var(--ink-soft)" }}>{STATUS_LABEL[m.status]}</span>
                       </span>
                     </span>
                     {m.message && (
