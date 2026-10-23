@@ -123,7 +123,13 @@ export interface DashboardResult {
     fyContributed: number;
   } | null;
   group: {
-    /** Cash collected during the current month. */
+    /**
+     * What the members' contributions cover for the CURRENT month, counting
+     * money paid in advance. It is the current month's column total on the
+     * ledger, not the cash that happened to arrive this month. So when
+     * everyone is paid up it is always (members who have joined) x (the
+     * monthly target), however early or late the money came in.
+     */
     monthCollected: number;
     /** Everything paid in, minus everything spent — what should be in the Till. */
     fundTotal: number;
@@ -148,6 +154,11 @@ export function buildDashboard(input: DashboardInput): DashboardResult {
     allocatedByMember.set(a.memberId, (allocatedByMember.get(a.memberId) ?? 0) + Number(a.amount));
   }
 
+  // What the ledger shows covered for the current month, across all members.
+  // Taken from each member's own ledger so it does not depend on which
+  // financial year is being looked at.
+  let monthCovered = 0;
+
   // ---- The grid ------------------------------------------------------------
   const sortedMembers = [...input.members].sort((a, b) =>
     compareMembers(
@@ -167,6 +178,8 @@ export function buildDashboard(input: DashboardInput): DashboardResult {
       asOfMonth: input.asOfMonth,
       fyStartMonth,
     });
+
+    monthCovered += ledger.months.find((m) => m.month === input.asOfMonth)?.paid ?? 0;
 
     const dueByMonth = new Map(ledger.months.map((m) => [m.month, m]));
     const prepaidByMonth = new Map(ledger.prepaidMonths.map((m) => [m.month, m]));
@@ -233,14 +246,9 @@ export function buildDashboard(input: DashboardInput): DashboardResult {
     }
   }
 
-  // ---- Group cash figures ---------------------------------------------------
-  // An ignored payment is money that is not a contribution, so it is left out of both.
+  // ---- Fund total ---------------------------------------------------------------
+  // An ignored payment is money that is not a contribution, so it is left out.
   const countedPayments = input.payments.filter((p) => p.matchStatus !== "ignored");
-
-  const monthCollected = countedPayments
-    .filter((p) => p.kind === "mpesa" || p.kind === "manual")
-    .filter((p) => monthKeyFromInstant(p.paidAt) === input.asOfMonth)
-    .reduce((sum, p) => sum + Number(p.amount), 0);
 
   const fundTotal = countedPayments.reduce((sum, p) => sum + Number(p.amount), 0) - input.expensesTotal;
 
@@ -268,7 +276,7 @@ export function buildDashboard(input: DashboardInput): DashboardResult {
     months,
     targetAmount: input.targetAmount,
     me,
-    group: { monthCollected: round2(monthCollected), fundTotal: round2(fundTotal) },
+    group: { monthCollected: round2(monthCovered), fundTotal: round2(fundTotal) },
     rows,
     columnTotals,
   };

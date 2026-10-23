@@ -38,13 +38,36 @@ test("a member who owes money gets the standard report with their own balance", 
   );
 });
 
-test("a fully paid member never sees 'KES 0 owing': they are told their account is up to date", () => {
+test("a fully paid member never sees 'KES 0 owing': they still see their balance, and that they are up to date", () => {
   const message = composeReportMessage({
     template: TEMPLATE, fundName: "Family Fund", reportDate: "2026-10-15", monthCollected: 4200, fundTotal: 16048.41,
     balance: 0, hasPendingPayment: false, siteUrl: "https://example.test",
   });
-  assert.ok(message.includes("Your account is up to date. Thank you!"));
+  assert.ok(message.includes("Your balance: KES 0. You are up to date."));
   assert.ok(!message.includes("owing"));
+  assert.ok(message.includes("https://example.test")); // the link to the site is always there
+});
+
+test("a member who has paid ahead is told by how much, instead of just 'KES 0'", () => {
+  const message = composeReportMessage({
+    template: TEMPLATE, fundName: "Family Fund", reportDate: "2026-10-15", monthCollected: 4200, fundTotal: 16048.41,
+    balance: 0, credit: 900, hasPendingPayment: false, siteUrl: "https://example.test",
+  });
+  assert.ok(message.includes("Your balance: KES 0. You are paid ahead by KES 900."));
+  assert.ok(!message.includes("owing"));
+});
+
+test("every report states the month's total, the total in the account, the member's own balance and the link", () => {
+  for (const balance of [0, 600]) {
+    const message = composeReportMessage({
+      template: TEMPLATE, fundName: "Family Fund", reportDate: "2026-10-15", monthCollected: 4800, fundTotal: 16048.41,
+      balance, hasPendingPayment: false, siteUrl: "https://example.test",
+    });
+    assert.ok(message.includes("collected this month KES 4,800"));
+    assert.ok(message.includes("Total in account KES 16,048"));
+    assert.ok(message.includes("Your balance: KES"));
+    assert.ok(message.includes("https://example.test"));
+  }
 });
 
 test("a member with a payment awaiting confirmation gets a 'being confirmed' note", () => {

@@ -13,8 +13,10 @@
 // {pending_note} (empty, or "A payment from you is being confirmed.").
 //
 // Two rules are applied automatically so nobody gets a misleading text:
-//   * A member who owes nothing never sees "balance: KES 0 owing": the
-//     default balance sentence is swapped for "Your account is up to date."
+//   * Everyone's text states their own balance. A member who owes nothing
+//     never sees "KES 0 owing": the default balance sentence becomes
+//     "Your balance: KES 0. You are up to date.", or, if they have paid
+//     ahead, "Your balance: KES 0. You are paid ahead by KES 900."
 //   * A member with a payment awaiting the admin's confirmation gets a
 //     short "a payment is being confirmed" note, because their balance
 //     may look too high until it is confirmed.
@@ -37,6 +39,8 @@ export interface ReportMessage {
   phone: string | null;
   message: string;
   balance: number;
+  /** Money paid ahead (0 when none). */
+  credit: number;
   hasPendingPayment: boolean;
   /** How many SMS segments this message will cost (160 characters each, 153 once it needs more than one). */
   segments: number;
@@ -94,11 +98,18 @@ export function composeReportMessage(params: {
   monthCollected: number;
   fundTotal: number;
   balance: number;
+  /** Money paid ahead of what is due so far (0 when none). */
+  credit?: number;
   hasPendingPayment: boolean;
   siteUrl: string;
 }): string {
   const owes = params.balance > 0;
-  const balanceLine = owes ? `Your balance: KES ${formatKes(params.balance)} owing.` : "Your account is up to date. Thank you!";
+  const credit = params.credit ?? 0;
+  const balanceLine = owes
+    ? `Your balance: KES ${formatKes(params.balance)} owing.`
+    : credit > 0
+      ? `Your balance: KES 0. You are paid ahead by KES ${formatKes(credit)}.`
+      : "Your balance: KES 0. You are up to date.";
   const pendingNote = params.hasPendingPayment ? "A payment from you is being confirmed." : "";
 
   let template = params.template;
@@ -139,6 +150,7 @@ export function buildReportMessages(input: BuildReportInput): ReportMessage[] {
       monthCollected: input.monthCollected,
       fundTotal: input.fundTotal,
       balance: ledger.balance,
+      credit: ledger.creditBalance,
       hasPendingPayment,
       siteUrl: input.siteUrl,
     });
@@ -148,6 +160,7 @@ export function buildReportMessages(input: BuildReportInput): ReportMessage[] {
       phone: m.primaryPhone,
       message,
       balance: ledger.balance,
+      credit: ledger.creditBalance,
       hasPendingPayment,
       segments: smsSegments(message),
     };

@@ -107,6 +107,15 @@ function fakeDb(tables: Record<string, Row[]>, inserted: { table: string; row: R
         select: () => query,
         returns: () => query,
         range: () => query,
+        order: (column: string, options?: { ascending?: boolean }) => {
+          const direction = options?.ascending === false ? -1 : 1;
+          rows = [...rows].sort((a, b) => String(a[column]).localeCompare(String(b[column])) * direction);
+          return query;
+        },
+        limit: (count: number) => {
+          rows = rows.slice(0, count);
+          return query;
+        },
         eq: (column: string, value: unknown) => {
           rows = rows.filter((r) => r[column] === value);
           return query;
@@ -137,6 +146,7 @@ const TABLES = (): Record<string, Row[]> => ({
   payments: [{ suggested_member_id: "pending", match_status: "needs_confirmation", amount: 300, kind: "mpesa", paid_at: "2026-09-02T00:00:00.000Z" }],
   sms_log: [{ member_id: "sent", kind: "reminder", period: PERIOD, status: "sent" }],
   fund_expenses: [],
+  imports: [{ status: "confirmed", created_at: new Date().toISOString() }], // a statement was imported just now
 });
 const statusOf = (plan: { messages: { memberId: string; status: string }[] }, id: string) => plan.messages.find((m) => m.memberId === id)?.status;
 
@@ -161,7 +171,8 @@ test("report plan: EVERYONE with a phone gets one (fully paid included); a remin
   assert.equal(statusOf(plan, "pending"), "ready");
   assert.equal(statusOf(plan, "nophone"), "no_phone");
   const paid = plan.messages.find((m) => m.memberId === "paid")!;
-  assert.ok(paid.message.includes("up to date"));
+  assert.ok(paid.message.includes("Your balance: KES 0"));
+  assert.ok(paid.message.includes("paid ahead")); // a huge advance payment is reported as such, not as a plain zero
   const pending = plan.messages.find((m) => m.memberId === "pending")!;
   assert.ok(pending.message.includes("being confirmed"));
   // No report names any member at all.
@@ -210,4 +221,52 @@ test("once a real text has been recorded for this month, that member is never of
   const inserted: { table: string; row: Row }[] = [];
   const summary = await sendMessages(fakeDb(tables, inserted), "reminder", { settings: SETTINGS });
   assert.equal(summary.attempted, 0);
+});
+
+const daysAgo = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
+
+test("fresh payment data: not stale, and an automatic send goes ahead", async () => {
+  const inserted: { table: string; row: Row }[] = [];
+  const db = fakeDb(TABLES(), inserted);
+  const plan = await planMessages(db, "reminder", SETTINGS);
+  assert.equal(plan.dataFreshness.stale, false);
+  assert.equal(plan.dataFreshness.ageDays, 0);
+  const summary = await sendMessages(db, "reminder", { settings: SETTINGS, automatic: true });
+  assert.equal(summary.held, undefined);
+  assert.equal(summary.attempted, 1);
+});
+
+test("old payment data: an AUTOMATIC send is held back with a clear reason and nothing is logged; a send started by hand still works", async () => {
+  const tables = TABLES();
+  tables.imports = [{ status: "confirmed", created_at: daysAgo(10) }];
+  const inserted: { table: string; row: Row }[] = [];
+  const db = fakeDb(tables, inserted);
+
+  const plan = await planMessages(db, "reminder", SETTINGS);
+  assert.equal(plan.dataFreshness.stale, true);
+  assert.equal(plan.dataFreshness.ageDays, 10);
+
+  const held = await sendMessages(db, "reminder", { settings: SETTINGS, automatic: true });
+  assert.equal(held.attempted, 0);
+  assert.ok(held.held && held.held.includes("10 day(s) ago"));
+  assert.equal(inserted.length, 0);
+
+  const manual = await sendMessages(db, "reminder", { settings: SETTINGS });
+  assert.equal(manual.attempted, 1);
+});
+
+test("no statement ever imported counts as stale; a limit of 0 turns the hold off", async () => {
+  const tables = TABLES();
+  tables.imports = [];
+  const plan = await planMessages(fakeDb(tables, []), "reminder", SETTINGS);
+  assert.equal(plan.dataFreshness.stale, true);
+  assert.equal(plan.dataFreshness.ageDays, null);
+
+  const off = mergeSettingsWithDefaults({ ...SETTINGS, auto_send_max_import_age_days: "0" });
+  const planOff = await planMessages(fakeDb(tables, []), "reminder", off);
+  assert.equal(planOff.dataFreshness.stale, false);
+});
+
+test("the import-age limit is a real setting with a safe default", async () => {
+  assert.equal(mergeSettingsWithDefaults({}).auto_send_max_import_age_days, "4");
 });

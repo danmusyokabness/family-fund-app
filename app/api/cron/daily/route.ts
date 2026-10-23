@@ -65,7 +65,7 @@ export async function GET(req: NextRequest) {
   // Each job is independent: a problem with one must not stop the other.
   if (inReminderWindow) {
     try {
-      reminders = await sendMessages(db, "reminder", { settings });
+      reminders = await sendMessages(db, "reminder", { settings, automatic: true });
     } catch (err) {
       ok = false;
       errors.push(`reminders: ${err instanceof Error ? err.message : String(err)}`);
@@ -73,7 +73,7 @@ export async function GET(req: NextRequest) {
   }
   if (inReportWindow) {
     try {
-      report = await sendMessages(db, "report", { settings });
+      report = await sendMessages(db, "report", { settings, automatic: true });
     } catch (err) {
       ok = false;
       errors.push(`report: ${err instanceof Error ? err.message : String(err)}`);

@@ -43,6 +43,17 @@ export interface PlannedMessage {
   status: PlanStatus;
 }
 
+export interface DataFreshness {
+  /** When payment data last changed: the latest confirmed statement import (or live Daraja payment). Null if never. */
+  lastUpdatedAt: string | null;
+  /** Whole days since then, in Nairobi time. Null if never. */
+  ageDays: number | null;
+  /** The limit from Setup; 0 means "never hold". */
+  maxAgeDays: number;
+  /** True when an AUTOMATIC text should wait for fresher data. */
+  stale: boolean;
+}
+
 export interface MessagePlan {
   kind: MessageKind;
   period: string; // "YYYY-MM"
@@ -55,6 +66,7 @@ export interface MessagePlan {
   messages: PlannedMessage[];
   counts: Record<PlanStatus, number>;
   totalSegments: number;
+  dataFreshness: DataFreshness;
 }
 
 interface MemberRow {
@@ -80,6 +92,32 @@ export async function loadSettings(db: SupabaseClient): Promise<Record<string, s
   const stored: Record<string, string> = {};
   for (const r of data ?? []) stored[r.key] = r.value;
   return mergeSettingsWithDefaults(stored);
+}
+
+function nairobiDateOf(iso: string): string {
+  return new Date(new Date(iso).getTime() + 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+function daysBetween(fromDate: string, toDate: string): number {
+  const [fy, fm, fd] = fromDate.split("-").map(Number);
+  const [ty, tm, td] = toDate.split("-").map(Number);
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86_400_000);
+}
+
+/**
+ * How current is the payment data? Until live M-PESA intake (Daraja) is
+ * running, new payments only arrive when the admin imports a statement, so
+ * the date of the last import is how fresh everything is.
+ */
+export async function loadDataFreshness(db: SupabaseClient, today: string, settings: Record<string, string>): Promise<DataFreshness> {
+  const { data: imports } = await db.from("imports").select("created_at").eq("status", "confirmed").order("created_at", { ascending: false }).limit(1);
+  const { data: live } = await db.from("payments").select("created_at").eq("source", "daraja").order("created_at", { ascending: false }).limit(1);
+
+  const stamps = [...(imports ?? []), ...(live ?? [])].map((r) => String(r.created_at)).filter(Boolean).sort();
+  const lastUpdatedAt = stamps.length > 0 ? stamps[stamps.length - 1] : null;
+  const ageDays = lastUpdatedAt ? Math.max(0, daysBetween(nairobiDateOf(lastUpdatedAt), today)) : null;
+  const maxAgeDays = Number(settings.auto_send_max_import_age_days ?? 4);
+  const limit = Number.isFinite(maxAgeDays) ? maxAgeDays : 4;
+  return { lastUpdatedAt, ageDays, maxAgeDays: limit, stale: limit > 0 && (ageDays === null || ageDays > limit) };
 }
 
 export async function planMessages(db: SupabaseClient, kind: MessageKind, settingsIn?: Record<string, string>): Promise<MessagePlan> {
@@ -193,6 +231,7 @@ export async function planMessages(db: SupabaseClient, kind: MessageKind, settin
     messages,
     counts,
     totalSegments: messages.filter((m) => m.status === "ready").reduce((n, m) => n + m.segments, 0),
+    dataFreshness: await loadDataFreshness(db, today, settings),
   };
 }
 
@@ -204,6 +243,8 @@ export interface SendSummary {
   dryRun: boolean;
   failed: number;
   failures: { fullName: string; error: string }[];
+  /** Set when an automatic send was held back, with the reason. Nothing was sent. */
+  held?: string;
 }
 
 /**
@@ -213,9 +254,22 @@ export interface SendSummary {
 export async function sendMessages(
   db: SupabaseClient,
   kind: MessageKind,
-  options: { memberIds?: string[]; settings?: Record<string, string> } = {}
+  options: { memberIds?: string[]; settings?: Record<string, string>; automatic?: boolean } = {}
 ): Promise<SendSummary> {
   const plan = await planMessages(db, kind, options.settings);
+
+  // An AUTOMATIC send waits when the payment data is too old: texts built on
+  // old data would remind people who have already paid. A send the admin
+  // starts by hand is never held (the screen shows the same warning).
+  if (options.automatic && plan.dataFreshness.stale) {
+    const f = plan.dataFreshness;
+    const held =
+      f.ageDays === null
+        ? "No statement has ever been imported, so the automatic text was held back."
+        : `The last statement import was ${f.ageDays} day(s) ago (limit ${f.maxAgeDays}), so the automatic text was held back. Import the latest statement and it will go out on the next daily run.`;
+    return { kind, period: plan.period, attempted: 0, sent: 0, dryRun: !plan.live, failed: 0, failures: [], held };
+  }
+
   const chosen = options.memberIds ? new Set(options.memberIds) : null;
   const toSend = plan.messages.filter((m) => m.status === "ready" && m.phone && (!chosen || chosen.has(m.memberId)));
 

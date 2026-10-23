@@ -75,6 +75,19 @@ export const SETTINGS_SCHEMA: SettingField[] = [
     max: 28,
   },
   {
+    key: "auto_send_max_import_age_days",
+    label: "Hold the automatic texts if the payment data is older than (days)",
+    type: "integer",
+    default: "4",
+    required: false,
+    min: 0,
+    max: 60,
+    helpText:
+      "The app only knows about payments you have imported (a statement upload). If the last import is older than this many days " +
+      "when a text is due, the automatic text waits (and is sent on a later day in its window once you import), so nobody who has " +
+      "already paid is reminded by mistake. 0 = always send, however old the data is.",
+  },
+  {
     key: "site_url",
     label: "Site link (included in SMS messages)",
     type: "string",

@@ -97,7 +97,7 @@ test("the superadmin (no member) sees no personal figures and no highlighted row
   assert.equal(result.rows.some((r) => r.isMe), false);
 });
 
-test("group cash figures: collected this month excludes ignored payments, adjustments and opening balances; fund total counts everything real minus expenses", () => {
+test("fund total counts every real payment (ignored ones left out) minus expenses", () => {
   const result = buildDashboard(
     input({
       members: [oldMember],
@@ -112,28 +112,57 @@ test("group cash figures: collected this month excludes ignored payments, adjust
       expensesTotal: 35,
     })
   );
-  // September: 600 + 300 (an unmatched payment is still real money in) = 900.
-  assert.equal(result.group.monthCollected, 900);
-  // 600 + 300 + 500 + 1000 + 300 = 2700, minus 35 of charges.
+  // 600 + 300 + 500 + 1000 + 300 = 2700, minus 35 of charges. The ignored 300 is not counted.
   assert.equal(result.group.fundTotal, 2665);
 });
 
-test("a payment just after midnight in Nairobi is counted in the new month, not the old one", () => {
+test("group total this month is what the ledger covers for this month, money paid in advance included", () => {
+  // Joined Aug; September is the current month. 900 in total: Aug 300, Sep 300, Oct (ahead) 300.
+  const result = buildDashboard(
+    input({ members: [oldMember], allocations: [{ memberId: "A", amount: 900, paidAt: "2026-08-05T08:00:00Z" }] })
+  );
+  assert.equal(result.group.monthCollected, 300);
+});
+
+test("group total this month does not care WHEN the money arrived: all paid up, the figure is members x target every month", () => {
+  const members: DashboardMember[] = [oldMember, youngMember, earlyNoDob];
+  // Everyone paid 3,000 back in August, long before September.
+  const allocations = members.map((m) => ({ memberId: m.id, amount: 3000, paidAt: "2026-08-02T08:00:00Z" }));
+  for (const asOfMonth of ["2026-09", "2026-10", "2026-12", "2027-03"]) {
+    const result = buildDashboard(input({ members, allocations, asOfMonth }));
+    assert.equal(result.group.monthCollected, 900, `3 paid-up members x 300 in ${asOfMonth}`);
+  }
+});
+
+test("a member who owes this month lowers the group total by what is missing", () => {
   const result = buildDashboard(
     input({
-      members: [oldMember],
-      asOfMonth: "2026-09",
-      payments: [
-        // 10pm UTC on 31 Aug = 1am 1 Sep in Nairobi: September.
-        { amount: 300, kind: "mpesa", paidAt: "2026-08-31T22:00:00Z", matchStatus: "matched" },
-        // 8pm UTC on 30 Sep = 11pm 30 Sep in Nairobi: still September.
-        { amount: 300, kind: "mpesa", paidAt: "2026-09-30T20:00:00Z", matchStatus: "matched" },
-        // 9pm UTC on 30 Sep = midnight 1 Oct in Nairobi: October, not this month.
-        { amount: 300, kind: "mpesa", paidAt: "2026-09-30T21:00:00Z", matchStatus: "matched" },
+      members: [oldMember, youngMember],
+      allocations: [
+        { memberId: "A", amount: 3000, paidAt: "2026-08-02T08:00:00Z" }, // paid ahead
+        { memberId: "B", amount: 300, paidAt: "2026-08-02T08:00:00Z" }, // only August: owes September
       ],
     })
   );
-  assert.equal(result.group.monthCollected, 600);
+  assert.equal(result.group.monthCollected, 300);
+});
+
+test("a partly paid month counts only the part paid, and a member who has not joined yet adds nothing", () => {
+  const result = buildDashboard(
+    input({
+      members: [oldMember, lateNoDob],
+      asOfMonth: "2026-08",
+      allocations: [{ memberId: "A", amount: 100, paidAt: "2026-08-02T08:00:00Z" }],
+    })
+  );
+  assert.equal(result.group.monthCollected, 100); // A paid 100 of 300; C joins in September
+});
+
+test("the group total for this month is the same whichever financial year is being viewed", () => {
+  const allocations = [{ memberId: "A", amount: 900, paidAt: "2026-08-05T08:00:00Z" }];
+  const current = buildDashboard(input({ members: [oldMember], allocations, asOfMonth: "2027-08" }));
+  const looking_back = buildDashboard(input({ members: [oldMember], allocations, asOfMonth: "2027-08", selectedFyMonth: "2026-10" }));
+  assert.equal(looking_back.group.monthCollected, current.group.monthCollected);
 });
 
 test("cash contributed this year respects the financial-year boundary, in Nairobi time", () => {
@@ -211,4 +240,104 @@ test("money allocated to someone who is not in the member list (e.g. deactivated
     })
   );
   assert.equal(result.rows.length, 1);
+});
+
+// ---------------------------------------------------------------------
+// The full ledger (lib/full-ledger.ts)
+// ---------------------------------------------------------------------
+import { buildFullLedger, type FullLedgerExpense, type FullLedgerPayment } from "../lib/full-ledger.ts";
+
+const pay = (id: string, amount: number, paidAt: string, extra: Partial<FullLedgerPayment> = {}): FullLedgerPayment => ({
+  id, amount, kind: "mpesa", paidAt, matchStatus: "matched", memberNames: ["Test Member"], note: null, ...extra,
+});
+const exp = (id: string, kind: string, amount: number, occurredAt: string, description: string | null = null): FullLedgerExpense => ({
+  id, kind, amount, occurredAt, description,
+});
+
+test("full ledger: its final balance is exactly the dashboard's 'Total in account', ignored payments left out of both", () => {
+  const payments = [
+    pay("1", 600, "2026-09-03T08:00:00Z"),
+    pay("2", 300, "2026-09-10T08:00:00Z", { kind: "manual", matchStatus: "unmatched", memberNames: [] }),
+    pay("3", 500, "2026-09-12T08:00:00Z", { kind: "adjustment", note: "Correction" }),
+    pay("4", 1000, "2026-08-01T08:00:00Z", { kind: "opening" }),
+    pay("5", 300, "2026-09-15T08:00:00Z", { matchStatus: "ignored" }),
+  ];
+  const expenses = [exp("a", "charge", 4.95, "2026-09-03T08:00:00Z"), exp("b", "withdrawal", 200, "2026-09-20T08:00:00Z", "Hospital bill"), exp("c", "other", 30, "2026-09-21T08:00:00Z", "Bank fee")];
+  const ledger = buildFullLedger({ payments, expenses });
+  const dashboard = buildDashboard(
+    input({
+      members: [oldMember],
+      payments: payments.map((p) => ({ amount: p.amount, kind: p.kind as "mpesa", paidAt: p.paidAt, matchStatus: p.matchStatus as "matched" })),
+      expensesTotal: expenses.reduce((n, e) => n + e.amount, 0),
+    })
+  );
+  assert.equal(ledger.balance, dashboard.group.fundTotal);
+  assert.equal(ledger.balance, 2165.05);
+});
+
+test("full ledger: every kind of movement is categorised and labelled for people to read", () => {
+  const ledger = buildFullLedger({
+    payments: [
+      pay("1", 300, "2026-09-03T08:00:00Z", { memberNames: ["Ann One", "Bea Two"] }),
+      pay("2", 300, "2026-09-04T08:00:00Z", { memberNames: [], matchStatus: "needs_confirmation" }),
+      pay("3", 300, "2026-09-05T08:00:00Z", { memberNames: [], matchStatus: "unmatched" }),
+      pay("4", 1000, "2026-08-01T08:00:00Z", { kind: "opening" }),
+    ],
+    expenses: [exp("a", "charge", 3.3, "2026-09-03T08:00:00Z", "Pay merchant Charge"), exp("b", "withdrawal", 500, "2026-09-06T08:00:00Z", "Funeral support"), exp("c", "other", 20, "2026-09-07T08:00:00Z")],
+  });
+  const all = ledger.months.flatMap((m) => m.entries);
+  const byId = (id: string) => all.find((e) => e.id === id)!;
+  assert.equal(byId("p-1").label, "Ann One, Bea Two");
+  assert.equal(byId("p-1").category, "contribution");
+  assert.equal(byId("p-2").label, "Payment awaiting confirmation");
+  assert.equal(byId("p-2").awaitingMember, true);
+  assert.equal(byId("p-3").label, "Payment not yet matched to a member");
+  assert.equal(byId("p-4").category, "opening");
+  assert.equal(byId("e-a").category, "charge");
+  assert.equal(byId("e-a").detail, "Pay merchant Charge");
+  assert.equal(byId("e-a").money, -3.3);
+  assert.equal(byId("e-b").label, "Funeral support");
+  assert.equal(byId("e-b").category, "withdrawal");
+  assert.equal(byId("e-c").label, "Other expense");
+  assert.equal(ledger.byCategory.contribution, 900);
+  assert.equal(ledger.byCategory.withdrawal, 500);
+  assert.equal(ledger.byCategory.charge, 3.3);
+  assert.equal(ledger.byCategory.other, 20);
+  assert.equal(ledger.byCategory.opening, 1000);
+});
+
+test("full ledger: the running balance follows time, and a payment comes before the charge taken at the same moment", () => {
+  const ledger = buildFullLedger({
+    payments: [pay("1", 900, "2026-09-29T15:36:54Z"), pay("2", 105, "2026-09-24T05:03:16Z")],
+    expenses: [exp("a", "charge", 4.95, "2026-09-29T15:36:54Z")],
+  });
+  const september = ledger.months[0].entries; // newest first
+  assert.deepEqual(september.map((e) => e.id), ["e-a", "p-1", "p-2"]);
+  assert.deepEqual(september.map((e) => e.balanceAfter), [1000.05, 1005, 105]);
+});
+
+test("full ledger: months are newest first, grouped by NAIROBI month, with money in/out and a closing balance", () => {
+  const ledger = buildFullLedger({
+    payments: [pay("1", 300, "2026-09-30T21:30:00Z"), pay("2", 300, "2026-09-10T08:00:00Z")], // the first is 00:30 on 1 October in Nairobi
+    expenses: [exp("a", "withdrawal", 100, "2026-10-05T08:00:00Z", "Help")],
+  });
+  assert.deepEqual(ledger.months.map((m) => m.month), ["2026-10", "2026-09"]);
+  const october = ledger.months[0];
+  assert.equal(october.entries.find((e) => e.id === "p-1")?.date, "2026-10-01");
+  assert.equal(october.entries.find((e) => e.id === "p-1")?.time, "00:30");
+  assert.equal(october.moneyIn, 300);
+  assert.equal(october.moneyOut, 100);
+  assert.equal(october.closingBalance, 500);
+  assert.equal(ledger.months[1].closingBalance, 300);
+  assert.equal(ledger.totalIn, 600);
+  assert.equal(ledger.totalOut, 100);
+});
+
+test("full ledger: an empty fund gives an empty ledger, and entries carry no phone numbers or receipt numbers", () => {
+  const empty = buildFullLedger({ payments: [], expenses: [] });
+  assert.deepEqual(empty.months, []);
+  assert.equal(empty.balance, 0);
+  const one = buildFullLedger({ payments: [pay("1", 300, "2026-09-03T08:00:00Z")], expenses: [] });
+  const keys = Object.keys(one.months[0].entries[0]).sort();
+  assert.deepEqual(keys, ["awaitingMember", "balanceAfter", "category", "date", "detail", "id", "label", "money", "month", "time"]);
 });

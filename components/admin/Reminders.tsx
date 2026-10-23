@@ -33,6 +33,7 @@ interface Plan {
   messages: PlannedMessage[];
   counts: Record<PlanStatus, number>;
   totalSegments: number;
+  dataFreshness: { lastUpdatedAt: string | null; ageDays: number | null; maxAgeDays: number; stale: boolean };
 }
 interface SendSummary {
   kind: Kind;
@@ -210,6 +211,31 @@ export default function Reminders() {
             }
           >
             {plan.liveNote}
+          </div>
+
+          <div
+            className="rounded-md border px-3 py-2 text-sm"
+            style={
+              plan.dataFreshness.stale
+                ? { borderColor: "var(--ochre)", background: "var(--paper)", color: "var(--ochre)" }
+                : { borderColor: "var(--line)", color: "var(--ink-soft)" }
+            }
+          >
+            {plan.dataFreshness.ageDays === null ? (
+              <>No statement has been imported yet.</>
+            ) : (
+              <>
+                Payment data was last updated{" "}
+                {plan.dataFreshness.ageDays === 0 ? "today" : `${plan.dataFreshness.ageDays} day(s) ago`} (the latest statement import).
+              </>
+            )}
+            {plan.dataFreshness.stale && (
+              <>
+                {" "}
+                <strong>The automatic text will wait</strong> until you import a newer statement (limit: {plan.dataFreshness.maxAgeDays} day(s), changeable in
+                Setup). You can still send by hand below, but anyone who has paid since then would be reminded wrongly.
+              </>
+            )}
           </div>
 
           <div className="paper-card space-y-2 p-4 text-sm">

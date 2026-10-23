@@ -80,6 +80,7 @@ export default function MemberDashboard() {
         <div className="paper-card p-4">
           <p className="text-xs text-ink-soft">Group total this month</p>
           <p className="figures font-serif text-2xl font-semibold">KES {money(data.group.monthCollected)}</p>
+          <p className="mt-0.5 text-xs text-ink-soft">What members&apos; contributions cover for this month, including money paid in advance</p>
         </div>
         <div className="paper-card p-4">
           <p className="text-xs text-ink-soft">Total in account</p>
@@ -163,6 +164,10 @@ export default function MemberDashboard() {
           <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm align-middle" style={{ background: "var(--forest-soft)" }} /> Paid</span>
           <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm align-middle" style={{ background: "var(--ochre-soft)" }} /> Unpaid / partial</span>
           <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm align-middle" style={{ background: "var(--steel-soft)" }} /> Prepaid ahead</span>
+        </div>
+        <div className="border-t border-line px-4 py-3 text-sm">
+          <a href="/ledger" className="link">Show full ledger</a>
+          <span className="ml-2 text-xs text-ink-soft">withdrawals, M-PESA charges and every other movement of money</span>
         </div>
       </div>
     </div>
