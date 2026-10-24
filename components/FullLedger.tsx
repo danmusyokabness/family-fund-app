@@ -9,11 +9,13 @@ import { useEffect, useState } from "react";
 import { formatMonthYear } from "@/lib/dates";
 import { LEDGER_CATEGORY_LABEL, type FullLedger as FullLedgerData, type LedgerCategory, type LedgerEntry } from "@/lib/full-ledger";
 
-type Filter = "all" | "contribution" | "withdrawal" | "charge" | "other" | "adjustments";
+type Filter = "all" | "contribution" | "extra" | "outside" | "withdrawal" | "charge" | "other" | "adjustments";
 
 const FILTERS: { key: Filter; label: string }[] = [
   { key: "all", label: "Everything" },
-  { key: "contribution", label: "Contributions" },
+  { key: "contribution", label: "Monthly contributions" },
+  { key: "extra", label: "Boosters & recoveries" },
+  { key: "outside", label: "Donations & other income" },
   { key: "withdrawal", label: "Withdrawals" },
   { key: "charge", label: "Transaction charges" },
   { key: "other", label: "Other expenses" },
@@ -22,6 +24,8 @@ const FILTERS: { key: Filter; label: string }[] = [
 
 function matches(filter: Filter, category: LedgerCategory): boolean {
   if (filter === "all") return true;
+  if (filter === "extra") return category === "booster" || category === "recovery";
+  if (filter === "outside") return category === "donation" || category === "other_income";
   if (filter === "adjustments") return category === "opening" || category === "adjustment";
   return filter === category;
 }
@@ -38,6 +42,10 @@ function shortDate(date: string): string {
 
 const CATEGORY_COLOR: Record<LedgerCategory, string> = {
   contribution: "var(--forest)",
+  booster: "var(--forest)",
+  recovery: "var(--forest)",
+  donation: "var(--steel)",
+  other_income: "var(--steel)",
   opening: "var(--steel)",
   adjustment: "var(--steel)",
   withdrawal: "var(--danger)",
@@ -66,12 +74,14 @@ export default function FullLedger() {
   if (error) return <p className="text-danger">{error}</p>;
   if (!ledger) return <p className="text-ink-soft">Loading...</p>;
 
-  const summary: { label: string; value: number; color: string }[] = [
-    { label: "Contributions", value: ledger.byCategory.contribution, color: "var(--forest)" },
-    { label: "Withdrawals", value: ledger.byCategory.withdrawal, color: "var(--danger)" },
-    { label: "Transaction charges", value: ledger.byCategory.charge, color: "var(--ochre)" },
-    { label: "Other expenses", value: ledger.byCategory.other, color: "var(--ink-soft)" },
-  ];
+  const summary: { label: string; value: number; color: string; show: boolean }[] = [
+    { label: "Monthly contributions", value: ledger.byCategory.contribution, color: "var(--forest)", show: true },
+    { label: "Boosters & recoveries", value: ledger.byCategory.booster + ledger.byCategory.recovery, color: "var(--forest)", show: ledger.byCategory.booster + ledger.byCategory.recovery !== 0 },
+    { label: "Donations & other income", value: ledger.byCategory.donation + ledger.byCategory.other_income, color: "var(--steel)", show: ledger.byCategory.donation + ledger.byCategory.other_income !== 0 },
+    { label: "Withdrawals", value: ledger.byCategory.withdrawal, color: "var(--danger)", show: true },
+    { label: "Transaction charges", value: ledger.byCategory.charge, color: "var(--ochre)", show: true },
+    { label: "Other expenses", value: ledger.byCategory.other, color: "var(--ink-soft)", show: true },
+  ].filter((card) => card.show);
   const openingAndAdjustments = ledger.byCategory.opening + ledger.byCategory.adjustment;
   const filtered = filter !== "all";
 
@@ -80,13 +90,14 @@ export default function FullLedger() {
       <div>
         <h1 className="font-serif text-2xl font-semibold">Full ledger</h1>
         <p className="mt-1 text-sm text-ink-soft">
-          Every movement of money in the fund&apos;s account, newest month first: contributions, withdrawals, M-PESA transaction
-          charges and other expenses. The balance at the end always matches the &quot;Total in account&quot; on the home page.
+          Every movement of money in the fund&apos;s account, newest month first: contributions of every kind, withdrawals, M-PESA
+          transaction charges and other expenses. Money that is in the account but not credited to a member (a donation, a stray payment)
+          is listed too. The balance at the end always matches the &quot;Total in account&quot; on the home page and the M-PESA balance.
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        <div className="paper-card p-4 sm:col-span-3 lg:col-span-1">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        <div className="paper-card p-4 col-span-2 sm:col-span-3 lg:col-span-1">
           <p className="text-xs text-ink-soft">Total in account</p>
           <p className="figures font-serif text-2xl font-semibold">KES {amount(ledger.balance)}</p>
         </div>

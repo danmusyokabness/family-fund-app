@@ -15,6 +15,14 @@
 //     Marks the payment as not a contribution (e.g. a refund or a
 //     mis-sent payment) and clears any allocations it had.
 //
+//   { purpose, relatedExpenseId? }
+//     Changes what the money is for (monthly contribution, booster,
+//     recovery, donation, other income). Allowed for every payment, including
+//     statement rows: it is our classification, not the bank's record. Only
+//     "monthly" pays off the member's months. A donation / other income that
+//     is not credited to anyone is filed as "ignored" (not credited to a
+//     member). A recovery can name the withdrawal it puts back.
+//
 //   { amount, paidAt, note }
 //     Edits the payment's own details. Only allowed for admin-entered
 //     rows (source = "admin") — a real M-PESA statement row's amount
@@ -24,6 +32,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
+import { isPaymentPurpose } from "@/lib/payment-purpose";
 
 interface PatchBody {
   allocations?: { memberId: string; amount: number }[];
@@ -32,6 +41,8 @@ interface PatchBody {
   amount?: number;
   paidAt?: string;
   note?: string;
+  purpose?: string;
+  relatedExpenseId?: string | null;
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -50,7 +61,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const db = supabaseAdmin();
   const { data: payment } = await db
     .from("payments")
-    .select("id, amount, source, payer_phone_masked")
+    .select("id, amount, source, payer_phone_masked, purpose, match_status")
     .eq("id", id)
     .maybeSingle();
 
@@ -61,9 +72,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // ---- Ignore -----------------------------------------------------------
   if (body.ignore) {
     await db.from("payment_allocations").delete().eq("payment_id", id);
+    // "Ignored" = not credited to any member. The money stays in the fund, as "other income".
     const { error } = await db
       .from("payments")
-      .update({ match_status: "ignored", suggested_member_id: null, suggestion_reason: null })
+      .update({
+        match_status: "ignored",
+        suggested_member_id: null,
+        suggestion_reason: null,
+        ...(payment.purpose === "monthly" ? { purpose: "other" } : {}),
+      })
       .eq("id", id);
     if (error) return NextResponse.json({ error: "Could not update the payment." }, { status: 500 });
     return NextResponse.json({ ok: true });
@@ -111,6 +128,35 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       );
     }
 
+    return NextResponse.json({ ok: true });
+  }
+
+  // ---- What the money is for ---------------------------------------------
+  if (body.purpose !== undefined) {
+    if (!isPaymentPurpose(body.purpose)) {
+      return NextResponse.json({ error: "That payment type is not recognised." }, { status: 400 });
+    }
+    const updates: Record<string, unknown> = { purpose: body.purpose };
+
+    if (body.purpose === "recovery" && body.relatedExpenseId) {
+      const { data: expense } = await db.from("fund_expenses").select("id").eq("id", body.relatedExpenseId).maybeSingle();
+      if (!expense) return NextResponse.json({ error: "The spending you chose to recover was not found." }, { status: 400 });
+      updates.related_expense_id = body.relatedExpenseId;
+    } else if (body.purpose !== "recovery") {
+      updates.related_expense_id = null; // only a recovery can name spending it replaces
+    } else if (body.relatedExpenseId === null) {
+      updates.related_expense_id = null;
+    }
+
+    // Money that is credited to nobody is filed as "ignored" so it never sits in the queue waiting for a member.
+    if ((body.purpose === "donation" || body.purpose === "other") && (payment.match_status === "unmatched" || payment.match_status === "needs_confirmation")) {
+      updates.match_status = "ignored";
+      updates.suggested_member_id = null;
+      updates.suggestion_reason = null;
+    }
+
+    const { error } = await db.from("payments").update(updates).eq("id", id);
+    if (error) return NextResponse.json({ error: "Could not update the payment." }, { status: 500 });
     return NextResponse.json({ ok: true });
   }
 

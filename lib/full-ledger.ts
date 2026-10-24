@@ -7,19 +7,39 @@
 // M-PESA transaction charges and other expenses.
 //
 // It is built from exactly the same two sources as the "Total in
-// account" figure (every real payment, minus every expense), so its
-// final balance always equals that figure. Payments the admin marked
-// "ignored" are not money in the fund and are left out, as there.
+// account" figure (EVERY payment that arrived, minus every expense), so its
+// final balance always equals that figure and the M-PESA balance. A
+// payment the admin chose not to credit to any member ("ignored") is still
+// money in the account, so it is listed, as "Other income".
+//
+// Money in is shown by what it is for (see lib/payment-purpose.ts):
+// monthly contributions, boosters, recoveries of spending, donations, other
+// income. A recovery can be linked to the withdrawal it puts back; that
+// withdrawal then shows how much has been recovered so far.
 //
 // Pure: plain data in, plain data out. No phone numbers and no M-PESA
 // receipt numbers are included, so it is safe to show to every member.
 
 import { monthKeyFromInstant, type MonthKey } from "./dates.ts";
 
-export type LedgerCategory = "contribution" | "opening" | "adjustment" | "withdrawal" | "charge" | "other";
+export type LedgerCategory =
+  | "contribution"
+  | "booster"
+  | "recovery"
+  | "donation"
+  | "other_income"
+  | "opening"
+  | "adjustment"
+  | "withdrawal"
+  | "charge"
+  | "other";
 
 export const LEDGER_CATEGORY_LABEL: Record<LedgerCategory, string> = {
   contribution: "Contribution",
+  booster: "Extra contribution (booster)",
+  recovery: "Recovery of spending",
+  donation: "Donation from outside",
+  other_income: "Other income",
   opening: "Opening balance",
   adjustment: "Adjustment",
   withdrawal: "Withdrawal",
@@ -28,7 +48,18 @@ export const LEDGER_CATEGORY_LABEL: Record<LedgerCategory, string> = {
 };
 
 /** The order categories are listed in summaries. */
-export const LEDGER_CATEGORY_ORDER: LedgerCategory[] = ["contribution", "opening", "adjustment", "withdrawal", "charge", "other"];
+export const LEDGER_CATEGORY_ORDER: LedgerCategory[] = [
+  "contribution",
+  "booster",
+  "recovery",
+  "donation",
+  "other_income",
+  "opening",
+  "adjustment",
+  "withdrawal",
+  "charge",
+  "other",
+];
 
 export interface FullLedgerPayment {
   id: string;
@@ -39,6 +70,10 @@ export interface FullLedgerPayment {
   /** Names of the members the payment was counted for (empty until it is matched). */
   memberNames: string[];
   note: string | null;
+  /** What the money is for (see lib/payment-purpose.ts). Missing means "monthly". */
+  purpose?: string;
+  /** For a recovery payment: the expense (withdrawal) it puts back. */
+  relatedExpenseId?: string | null;
 }
 
 export interface FullLedgerExpense {
@@ -90,7 +125,19 @@ export interface FullLedger {
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
-const emptyCategories = (): Record<LedgerCategory, number> => ({ contribution: 0, opening: 0, adjustment: 0, withdrawal: 0, charge: 0, other: 0 });
+const emptyCategories = (): Record<LedgerCategory, number> => ({
+  contribution: 0,
+  booster: 0,
+  recovery: 0,
+  donation: 0,
+  other_income: 0,
+  opening: 0,
+  adjustment: 0,
+  withdrawal: 0,
+  charge: 0,
+  other: 0,
+});
+const kes = (n: number) => `KES ${Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
 
 function nairobiDateAndTime(iso: string): { date: string; time: string } {
   const shifted = new Date(new Date(iso).getTime() + 3 * 60 * 60 * 1000).toISOString();
@@ -110,15 +157,44 @@ interface Raw {
 export function buildFullLedger(input: { payments: FullLedgerPayment[]; expenses: FullLedgerExpense[] }): FullLedger {
   const raws: Raw[] = [];
 
+  // Which expense each recovery payment puts back, and how much has been recovered so far.
+  const expenseLabel = new Map<string, string>();
+  for (const e of input.expenses) expenseLabel.set(e.id, e.description?.trim() || (e.kind === "withdrawal" ? "Withdrawal" : "Expense"));
+  const recoveredByExpense = new Map<string, number>();
   for (const p of input.payments) {
-    if (p.matchStatus === "ignored") continue;
+    if (p.purpose === "recovery" && p.relatedExpenseId) {
+      recoveredByExpense.set(p.relatedExpenseId, (recoveredByExpense.get(p.relatedExpenseId) ?? 0) + Number(p.amount));
+    }
+  }
+
+  for (const p of input.payments) {
     const money = Number(p.amount);
+    const names = p.memberNames.filter(Boolean);
+    const purpose = p.purpose ?? "monthly";
+
     if (p.kind === "opening") {
       raws.push({ id: `p-${p.id}`, at: p.paidAt, category: "opening", label: "Opening balance", detail: p.note, money, awaitingMember: false });
     } else if (p.kind === "adjustment") {
       raws.push({ id: `p-${p.id}`, at: p.paidAt, category: "adjustment", label: p.note?.trim() || "Adjustment", detail: null, money, awaitingMember: false });
+    } else if (purpose === "booster") {
+      raws.push({ id: `p-${p.id}`, at: p.paidAt, category: "booster", label: names.length > 0 ? names.join(", ") : "Extra contribution", detail: "Not part of monthly dues", money, awaitingMember: false });
+    } else if (purpose === "recovery") {
+      const replaces = p.relatedExpenseId ? expenseLabel.get(p.relatedExpenseId) : null;
+      raws.push({
+        id: `p-${p.id}`,
+        at: p.paidAt,
+        category: "recovery",
+        label: names.length > 0 ? names.join(", ") : "Recovery contribution",
+        detail: replaces ? `Replaces: ${replaces}` : "Puts back money spent",
+        money,
+        awaitingMember: false,
+      });
+    } else if (purpose === "donation") {
+      raws.push({ id: `p-${p.id}`, at: p.paidAt, category: "donation", label: "Donation from outside", detail: null, money, awaitingMember: false });
+    } else if (purpose === "other" || p.matchStatus === "ignored") {
+      // Real money in the account that is credited to no member.
+      raws.push({ id: `p-${p.id}`, at: p.paidAt, category: "other_income", label: "Other income", detail: "Not credited to a member", money, awaitingMember: false });
     } else {
-      const names = p.memberNames.filter(Boolean);
       const awaiting = names.length === 0;
       raws.push({
         id: `p-${p.id}`,
@@ -135,12 +211,14 @@ export function buildFullLedger(input: { payments: FullLedgerPayment[]; expenses
   for (const e of input.expenses) {
     const amount = Number(e.amount);
     const description = e.description?.trim() || null;
+    const recovered = recoveredByExpense.get(e.id) ?? 0;
+    const recoveredNote = recovered > 0 ? `${kes(recovered)} of ${kes(amount)} recovered so far` : null;
     if (e.kind === "charge") {
       raws.push({ id: `e-${e.id}`, at: e.occurredAt, category: "charge", label: "M-PESA transaction charge", detail: description, money: -amount, awaitingMember: false });
     } else if (e.kind === "withdrawal") {
-      raws.push({ id: `e-${e.id}`, at: e.occurredAt, category: "withdrawal", label: description ?? "Withdrawal", detail: null, money: -amount, awaitingMember: false });
+      raws.push({ id: `e-${e.id}`, at: e.occurredAt, category: "withdrawal", label: description ?? "Withdrawal", detail: recoveredNote, money: -amount, awaitingMember: false });
     } else {
-      raws.push({ id: `e-${e.id}`, at: e.occurredAt, category: "other", label: description ?? "Other expense", detail: null, money: -amount, awaitingMember: false });
+      raws.push({ id: `e-${e.id}`, at: e.occurredAt, category: "other", label: description ?? "Other expense", detail: recoveredNote, money: -amount, awaitingMember: false });
     }
   }
 
@@ -213,4 +291,19 @@ export function buildFullLedger(input: { payments: FullLedgerPayment[]; expenses
   for (const c of LEDGER_CATEGORY_ORDER) byCategory[c] = round2(byCategory[c]);
 
   return { months, totalIn: round2(totalIn), totalOut: round2(totalOut), byCategory, balance };
+}
+
+/**
+ * The fund's balance at the end of the given Nairobi date ("YYYY-MM-DD"):
+ * the running balance after the last entry on or before it (0 if none).
+ * Used to compare the ledger with a bank statement's closing balance.
+ */
+export function balanceAsOf(ledger: FullLedger, date: string): number {
+  for (const month of ledger.months) {
+    for (const entry of month.entries) {
+      // Months and entries are newest first, so the first one on or before the date is the latest such entry.
+      if (entry.date <= date) return entry.balanceAfter;
+    }
+  }
+  return 0;
 }

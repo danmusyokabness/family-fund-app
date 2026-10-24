@@ -30,6 +30,12 @@ export interface HealthInput {
   lastBackupAt: string | null;
   /** How many phones will be texted when the payment data is old (Setup phone + member-admins). */
   alertPhoneCount: number;
+  /**
+   * The last imported statement's closing balance, and what the fund's own
+   * records say the balance was at the end of that statement's last day.
+   * Null when there is nothing to compare (no statement with a closing balance yet).
+   */
+  statementCheck: { closingBalance: number; asOfDate: string; ledgerBalance: number } | null;
 }
 
 const HOUR = 60 * 60 * 1000;
@@ -86,6 +92,31 @@ export function buildHealthChecks(input: HealthInput): HealthCheck[] {
       status: "ok",
       detail: input.freshness.ageDays === 0 ? "Updated today." : `Last updated ${input.freshness.ageDays} day(s) ago.`,
     });
+  }
+
+  // 2a. Does the total in the account match the bank's own figure?
+  if (input.statementCheck) {
+    const { closingBalance, asOfDate, ledgerBalance } = input.statementCheck;
+    const difference = Math.round((ledgerBalance - closingBalance) * 100) / 100;
+    const money = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 });
+    checks.push(
+      Math.abs(difference) < 0.01
+        ? {
+            key: "balance_match",
+            label: "Total in account matches M-PESA",
+            status: "ok",
+            detail: `KES ${money(ledgerBalance)} on ${asOfDate}, the same as the last statement's closing balance.`,
+          }
+        : {
+            key: "balance_match",
+            label: "Total in account matches M-PESA",
+            status: "warn",
+            detail:
+              `On ${asOfDate} the app says KES ${money(ledgerBalance)} but the last statement ends at KES ${money(closingBalance)}: ` +
+              `${difference > 0 ? "the app is KES " + money(difference) + " too high" : "the app is KES " + money(-difference) + " too low"}. ` +
+              "Look for a payment recorded twice or wrongly, a missing payment or expense, or an opening balance that was never recorded (Payments tab).",
+          }
+    );
   }
 
   // 2b. Is anyone set up to be told to import the statement?

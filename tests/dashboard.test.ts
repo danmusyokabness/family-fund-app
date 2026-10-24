@@ -97,7 +97,7 @@ test("the superadmin (no member) sees no personal figures and no highlighted row
   assert.equal(result.rows.some((r) => r.isMe), false);
 });
 
-test("fund total counts every real payment (ignored ones left out) minus expenses", () => {
+test("fund total counts EVERY payment that arrived, including ones not credited to any member, minus expenses", () => {
   const result = buildDashboard(
     input({
       members: [oldMember],
@@ -112,8 +112,8 @@ test("fund total counts every real payment (ignored ones left out) minus expense
       expensesTotal: 35,
     })
   );
-  // 600 + 300 + 500 + 1000 + 300 = 2700, minus 35 of charges. The ignored 300 is not counted.
-  assert.equal(result.group.fundTotal, 2665);
+  // 600 + 300 + 500 + 1000 + 300 (not credited to anyone, but still in the account) + 300 = 3000, minus 35 of charges.
+  assert.equal(result.group.fundTotal, 2965);
 });
 
 test("group total this month is what the ledger covers for this month, money paid in advance included", () => {
@@ -254,7 +254,7 @@ const exp = (id: string, kind: string, amount: number, occurredAt: string, descr
   id, kind, amount, occurredAt, description,
 });
 
-test("full ledger: its final balance is exactly the dashboard's 'Total in account', ignored payments left out of both", () => {
+test("full ledger: its final balance is exactly the dashboard's 'Total in account', money not credited to a member included in both", () => {
   const payments = [
     pay("1", 600, "2026-09-03T08:00:00Z"),
     pay("2", 300, "2026-09-10T08:00:00Z", { kind: "manual", matchStatus: "unmatched", memberNames: [] }),
@@ -272,7 +272,8 @@ test("full ledger: its final balance is exactly the dashboard's 'Total in accoun
     })
   );
   assert.equal(ledger.balance, dashboard.group.fundTotal);
-  assert.equal(ledger.balance, 2165.05);
+  // 600 + 300 + 500 + 1000 + 300 (ignored, but real money) = 2700, minus 234.95 spent.
+  assert.equal(ledger.balance, 2465.05);
 });
 
 test("full ledger: every kind of movement is categorised and labelled for people to read", () => {
@@ -340,4 +341,102 @@ test("full ledger: an empty fund gives an empty ledger, and entries carry no pho
   const one = buildFullLedger({ payments: [pay("1", 300, "2026-09-03T08:00:00Z")], expenses: [] });
   const keys = Object.keys(one.months[0].entries[0]).sort();
   assert.deepEqual(keys, ["awaitingMember", "balanceAfter", "category", "date", "detail", "id", "label", "money", "month", "time"]);
+});
+
+// ---------------------------------------------------------------------
+// Payment purposes, and money that cannot be credited to anyone
+// ---------------------------------------------------------------------
+import { balanceAsOf } from "../lib/full-ledger.ts";
+import { countsTowardMonthlyDues, isPaymentPurpose, PAYMENT_PURPOSES } from "../lib/payment-purpose.ts";
+
+test("a stray payment nobody can be credited with still counts in the total in account and shows as other income (the 105 case)", () => {
+  const payments = [pay("1", 16048.41 - 105, "2026-09-10T08:00:00Z"), pay("2", 105, "2026-09-24T05:03:16Z", { matchStatus: "ignored", memberNames: [] })];
+  const ledger = buildFullLedger({ payments, expenses: [] });
+  assert.equal(ledger.balance, 16048.41);
+  const stray = ledger.months[0].entries.find((e) => e.id === "p-2")!;
+  assert.equal(stray.category, "other_income");
+  assert.equal(stray.label, "Other income");
+  assert.equal(stray.money, 105);
+  const dashboard = buildDashboard(
+    input({ members: [oldMember], payments: payments.map((p) => ({ amount: p.amount, kind: "mpesa", paidAt: p.paidAt, matchStatus: p.matchStatus })) })
+  );
+  assert.equal(dashboard.group.fundTotal, 16048.41);
+});
+
+test("payment purposes: five of them, with 'monthly' as the default, and anything unknown is rejected", () => {
+  assert.deepEqual([...PAYMENT_PURPOSES], ["monthly", "booster", "recovery", "donation", "other"]);
+  assert.equal(isPaymentPurpose("booster"), true);
+  assert.equal(isPaymentPurpose("gift"), false);
+  assert.equal(isPaymentPurpose(undefined), false);
+  assert.equal(countsTowardMonthlyDues(undefined), true);
+  assert.equal(countsTowardMonthlyDues(null), true);
+  assert.equal(countsTowardMonthlyDues("monthly"), true);
+  assert.equal(countsTowardMonthlyDues("booster"), false);
+  assert.equal(countsTowardMonthlyDues("recovery"), false);
+});
+
+test("a booster is credited to the giver but does NOT pay off any month; their monthly dues stay as they were", () => {
+  const allocations = [
+    { memberId: "A", amount: 300, paidAt: "2026-08-05T08:00:00Z", purpose: "monthly" }, // pays August only
+    { memberId: "A", amount: 5000, paidAt: "2026-09-05T08:00:00Z", purpose: "booster" }, // extra, not for the months
+  ];
+  const result = buildDashboard(input({ members: [oldMember], allocations, viewerMemberId: "A" }));
+  const row = result.rows[0];
+  assert.equal(row.balance, 300); // September is still owed: the booster did not pay it
+  assert.equal(row.credit, 0);
+  assert.equal(result.group.monthCollected, 0);
+  assert.ok(result.me && result.me.fyContributed >= 5300, "their total contributed includes the booster");
+});
+
+test("an allocation with no purpose (older data) is treated as monthly, so nothing changes for existing members", () => {
+  const withPurpose = buildDashboard(input({ members: [oldMember], allocations: [{ memberId: "A", amount: 900, paidAt: "2026-08-05T08:00:00Z", purpose: "monthly" }] }));
+  const without = buildDashboard(input({ members: [oldMember], allocations: [{ memberId: "A", amount: 900, paidAt: "2026-08-05T08:00:00Z" }] }));
+  assert.deepEqual(without.rows, withPurpose.rows);
+});
+
+test("full ledger: boosters, recoveries and donations are their own categories and all count in the balance", () => {
+  const ledger = buildFullLedger({
+    payments: [
+      pay("1", 300, "2026-09-03T08:00:00Z"),
+      pay("2", 2000, "2026-09-04T08:00:00Z", { purpose: "booster", memberNames: ["Ann One"] }),
+      pay("3", 500, "2026-09-05T08:00:00Z", { purpose: "donation", memberNames: [] }),
+      pay("4", 700, "2026-09-06T08:00:00Z", { purpose: "other", memberNames: [] }),
+    ],
+    expenses: [],
+  });
+  assert.equal(ledger.balance, 3500);
+  assert.equal(ledger.byCategory.contribution, 300);
+  assert.equal(ledger.byCategory.booster, 2000);
+  assert.equal(ledger.byCategory.donation, 500);
+  assert.equal(ledger.byCategory.other_income, 700);
+  const booster = ledger.months[0].entries.find((e) => e.id === "p-2")!;
+  assert.equal(booster.label, "Ann One");
+  assert.equal(booster.detail, "Not part of monthly dues");
+});
+
+test("full ledger: a recovery payment names the withdrawal it replaces, and the withdrawal shows how much has been recovered", () => {
+  const ledger = buildFullLedger({
+    payments: [
+      pay("1", 3000, "2026-09-20T08:00:00Z", { purpose: "recovery", memberNames: ["Ann One"], relatedExpenseId: "w1" }),
+      pay("2", 1500, "2026-09-25T08:00:00Z", { purpose: "recovery", memberNames: ["Bea Two"], relatedExpenseId: "w1" }),
+    ],
+    expenses: [exp("w1", "withdrawal", 10000, "2026-09-10T08:00:00Z", "Hospital bill")],
+  });
+  const entries = ledger.months[0].entries;
+  assert.equal(entries.find((e) => e.id === "p-1")!.detail, "Replaces: Hospital bill");
+  assert.equal(entries.find((e) => e.id === "e-w1")!.detail, "KES 4,500 of KES 10,000 recovered so far");
+  assert.equal(ledger.byCategory.recovery, 4500);
+  assert.equal(ledger.balance, -5500); // 4500 in, 10000 out
+});
+
+test("balanceAsOf gives the fund's balance at the end of a date, for comparing with a statement", () => {
+  const ledger = buildFullLedger({
+    payments: [pay("1", 1000, "2026-09-03T08:00:00Z"), pay("2", 300, "2026-09-20T08:00:00Z")],
+    expenses: [exp("a", "charge", 10, "2026-09-20T08:00:00Z")],
+  });
+  assert.equal(balanceAsOf(ledger, "2026-09-02"), 0);
+  assert.equal(balanceAsOf(ledger, "2026-09-03"), 1000);
+  assert.equal(balanceAsOf(ledger, "2026-09-19"), 1000);
+  assert.equal(balanceAsOf(ledger, "2026-09-20"), 1290);
+  assert.equal(balanceAsOf(ledger, "2026-12-31"), 1290);
 });

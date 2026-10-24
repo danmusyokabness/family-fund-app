@@ -289,6 +289,7 @@ const HEALTHY: HealthInput = {
   membersWithoutPhone: [],
   lastBackupAt: hoursBefore(24 * 3),
   alertPhoneCount: 1,
+  statementCheck: { closingBalance: 16048.41, asOfDate: "2026-10-02", ledgerBalance: 16048.41 },
 };
 const statusOfCheck = (input: HealthInput, key: string) => buildHealthChecks(input).find((c) => c.key === key)?.status;
 
@@ -343,6 +344,29 @@ test("health: amber when nobody is set up to be reminded to import the statement
   assert.equal(statusOfCheck({ ...HEALTHY, alertPhoneCount: 0 }, "alerts"), "warn");
   assert.equal(statusOfCheck({ ...HEALTHY, alertPhoneCount: 2 }, "alerts"), "ok");
 });
+
+test("health: the total in the account is compared with the statement's closing balance, and a difference is spelled out", () => {
+  assert.equal(statusOfCheck(HEALTHY, "balance_match"), "ok");
+  const off = buildHealthChecks({ ...HEALTHY, statementCheck: { closingBalance: 16048.41, asOfDate: "2026-10-02", ledgerBalance: 15943.41 } }).find((c) => c.key === "balance_match");
+  assert.equal(off?.status, "warn");
+  assert.ok(off?.detail.includes("KES 105 too low"), off?.detail);
+  assert.ok(off?.detail.includes("2026-10-02"));
+  const high = buildHealthChecks({ ...HEALTHY, statementCheck: { closingBalance: 1000, asOfDate: "2026-10-02", ledgerBalance: 1300 } }).find((c) => c.key === "balance_match");
+  assert.ok(high?.detail.includes("KES 300 too high"));
+  // Nothing to compare yet: no line at all, rather than a false alarm.
+  assert.equal(buildHealthChecks({ ...HEALTHY, statementCheck: null }).some((c) => c.key === "balance_match"), false);
+});
+
+test("a booster does not pay off monthly dues in the reminders either: the member still owes", async () => {
+  const tables = TABLES();
+  tables.payment_allocations = [{ member_id: "owes", amount: 1000000000, payments: { paid_at: "2026-09-01T00:00:00.000Z", purpose: "booster" } }];
+  const plan = await planMessages(fakeDb(tables, []), "reminder", SETTINGS);
+  assert.equal(statusOfPlan(plan, "owes"), "ready");
+  tables.payment_allocations = [{ member_id: "owes", amount: 1000000000, payments: { paid_at: "2026-09-01T00:00:00.000Z", purpose: "monthly" } }];
+  const paidPlan = await planMessages(fakeDb(tables, []), "reminder", SETTINGS);
+  assert.equal(statusOfPlan(paidPlan, "owes"), "no_balance_due");
+});
+const statusOfPlan = (plan: { messages: { memberId: string; status: string }[] }, id: string) => plan.messages.find((m) => m.memberId === id)?.status;
 
 test("health: the overall status is the worst single check", () => {
   assert.equal(overallStatus([{ key: "a", label: "a", status: "ok", detail: "" }, { key: "b", label: "b", status: "warn", detail: "" }]), "warn");

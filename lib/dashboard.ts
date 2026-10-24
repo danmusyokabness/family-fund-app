@@ -40,6 +40,7 @@ import {
   type MonthStatus,
 } from "./ledger.ts";
 import { compareMembers } from "./member-order.ts";
+import { countsTowardMonthlyDues } from "./payment-purpose.ts";
 
 export interface DashboardMember {
   id: string;
@@ -57,6 +58,12 @@ export interface DashboardAllocation {
   amount: number;
   /** When the payment behind this allocation arrived (ISO timestamp). */
   paidAt: string;
+  /**
+   * What the payment is for (see lib/payment-purpose.ts). Only "monthly" (or
+   * missing) pays off the member's monthly dues; boosters and the like are
+   * credited to the giver but do not tick off any month.
+   */
+  purpose?: string;
 }
 
 export interface DashboardPayment {
@@ -131,7 +138,7 @@ export interface DashboardResult {
      * monthly target), however early or late the money came in.
      */
     monthCollected: number;
-    /** Everything paid in, minus everything spent — what should be in the Till. */
+    /** Everything paid in (all purposes, credited or not), minus everything spent: what should be in the Till. */
     fundTotal: number;
   };
   rows: DashboardRow[];
@@ -148,9 +155,11 @@ export function buildDashboard(input: DashboardInput): DashboardResult {
   const fy = fyRangeForMonth(input.selectedFyMonth ?? input.asOfMonth, fyStartMonth);
   const months = monthsBetweenInclusive(fy.startMonth, fy.endMonth);
 
-  // ---- Everything each member has ever had allocated -------------------
+  // ---- What each member has paid toward their MONTHLY dues ----------------
+  // Boosters, recoveries and the like are real money but do not pay off months.
   const allocatedByMember = new Map<string, number>();
   for (const a of input.allocations) {
+    if (!countsTowardMonthlyDues(a.purpose)) continue;
     allocatedByMember.set(a.memberId, (allocatedByMember.get(a.memberId) ?? 0) + Number(a.amount));
   }
 
@@ -247,10 +256,10 @@ export function buildDashboard(input: DashboardInput): DashboardResult {
   }
 
   // ---- Fund total ---------------------------------------------------------------
-  // An ignored payment is money that is not a contribution, so it is left out.
-  const countedPayments = input.payments.filter((p) => p.matchStatus !== "ignored");
-
-  const fundTotal = countedPayments.reduce((sum, p) => sum + Number(p.amount), 0) - input.expensesTotal;
+  // EVERY payment that really arrived counts, whatever it is for and whether or
+  // not it could be credited to a member ("ignored" only means "not credited
+  // to anyone"). This must always equal the M-PESA account balance.
+  const fundTotal = input.payments.reduce((sum, p) => sum + Number(p.amount), 0) - input.expensesTotal;
 
   // ---- Which financial years can be chosen -------------------------------------
   const currentFy = fyRangeForMonth(input.asOfMonth, fyStartMonth);

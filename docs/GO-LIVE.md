@@ -82,6 +82,8 @@ If your Supabase screen does not match this description, send me a screenshot of
 
 This file is safe to run again at any time.
 
+Also run `db/006_payment_purpose.sql` the same way (SQL Editor, New query, paste, Run). It adds the "what is this payment for" information. Every value in the small table at the bottom must say `true`. It is safe to run twice. Run it **before** you deploy a new version of the code that mentions payment types.
+
 ### Step 5. Switch off the "wipe test data" button
 
 The Members tab has a red "Clear test data" area for the testing period. It is now locked and does nothing unless a Vercel setting called `ALLOW_TEST_DATA_RESET` is `true`. It is off by default, which is what you want. Check that this setting is **not** present in Vercel, or is set to `false`.
@@ -112,7 +114,8 @@ Open `/admin` and click **Setup**. Check or fill in every field, then **Save**:
 1. **Import** tab: choose the statement (PDF with its password, or CSV), click **Preview**.
 2. It must say **"Balance reconciles"**. If it says the balance did not reconcile, do not import; ask for help.
 3. Look at the right-hand labels: a member's name (matched), "to confirm" (a guess that needs you), or "unmatched". Click **Import**.
-4. **Payments** tab: go through **Needs confirmation** and **Unmatched** and give every payment to the right member (or mark it ignored if it is not a contribution). Until you do, these payments are not counted for anyone.
+4. **Payments** tab: go through **Needs confirmation** and **Unmatched** and give every payment to the right member. Money that really is in the account but belongs to no member (a stray payment, a gift from outside) is not lost: choose **Not for a member** (or set its **Type** to Donation or Other income). It stays in "Total in account", which must always equal the M-PESA balance, but it is credited to nobody. The **Health** tab warns you if the two ever disagree.
+   Other kinds of money are set with the **Type** selector on each payment: **Monthly contribution** (the normal case), **Extra contribution (booster)** (credited to the giver but does not pay off their months), **Recovery of spending** (puts back money spent in an emergency; you can name the withdrawal it replaces), **Donation from outside**, **Other income**.
 
 ### Step 9. First backup
 

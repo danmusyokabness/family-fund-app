@@ -31,6 +31,7 @@ import { fetchAllRows } from "./pagination.ts";
 import { sendSms } from "./sms.ts";
 import { buildAdminAlert } from "./admin-alerts.ts";
 import { normalizePhone } from "./phone.ts";
+import { countsTowardMonthlyDues } from "./payment-purpose.ts";
 
 export type MessageKind = "reminder" | "report";
 export type PlanStatus = "ready" | "already_sent" | "no_phone" | "no_balance_due" | "pending_confirmation";
@@ -140,11 +141,15 @@ export async function planMessages(db: SupabaseClient, kind: MessageKind, settin
   }));
 
   const allocRows = await fetchAllRows((range) =>
-    db.from("payment_allocations").select("member_id, amount, payments(paid_at)").range(range.from, range.to)
+    db.from("payment_allocations").select("member_id, amount, payments(paid_at, purpose)").range(range.from, range.to)
   );
-  const allocations = (allocRows as unknown as { member_id: string; amount: number; payments: { paid_at: string } | null }[]);
+  const allocations = (allocRows as unknown as { member_id: string; amount: number; payments: { paid_at: string; purpose?: string } | null }[]);
   const allocatedByMember: Record<string, number> = {};
-  for (const a of allocations) allocatedByMember[a.member_id] = (allocatedByMember[a.member_id] ?? 0) + Number(a.amount);
+  // Only payments for the MONTHLY contribution pay off monthly dues; boosters and the like do not.
+  for (const a of allocations) {
+    if (!countsTowardMonthlyDues(a.payments?.purpose)) continue;
+    allocatedByMember[a.member_id] = (allocatedByMember[a.member_id] ?? 0) + Number(a.amount);
+  }
 
   const { data: pendingRows } = await db.from("payments").select("suggested_member_id").eq("match_status", "needs_confirmation");
   const pendingIds = new Set<string>((pendingRows ?? []).map((r) => r.suggested_member_id).filter(Boolean) as string[]);
@@ -185,7 +190,7 @@ export async function planMessages(db: SupabaseClient, kind: MessageKind, settin
     const expenseRows = await fetchAllRows((range) => db.from("fund_expenses").select("amount").range(range.from, range.to));
     const dashboard = buildDashboard({
       members: members.map((m) => ({ id: m.id, fullName: m.fullName, joinedOn: m.joinedOn, dateOfBirth: null })),
-      allocations: allocations.map((a) => ({ memberId: a.member_id, amount: a.amount, paidAt: a.payments?.paid_at ?? "" })),
+      allocations: allocations.map((a) => ({ memberId: a.member_id, amount: a.amount, paidAt: a.payments?.paid_at ?? "", purpose: a.payments?.purpose })),
       payments: (paymentRows as unknown as { amount: number; kind: string; paid_at: string; match_status: string }[]).map((p) => ({
         amount: p.amount,
         kind: p.kind,

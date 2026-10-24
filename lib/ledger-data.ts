@@ -15,6 +15,8 @@ interface PaymentRow {
   paid_at: string;
   match_status: string;
   note: string | null;
+  purpose: string | null;
+  related_expense_id: string | null;
   payment_allocations: { members: { full_name: string } | null }[] | null;
 }
 interface ExpenseRow {
@@ -29,7 +31,7 @@ export async function loadFullLedgerInputs(db: SupabaseClient): Promise<{ paymen
   const paymentRows = (await fetchAllRows((range) =>
     db
       .from("payments")
-      .select("id, amount, kind, paid_at, match_status, note, payment_allocations(members(full_name))")
+      .select("id, amount, kind, paid_at, match_status, note, purpose, related_expense_id, payment_allocations(members(full_name))")
       .order("paid_at", { ascending: true })
       .range(range.from, range.to)
   )) as unknown as PaymentRow[];
@@ -51,6 +53,8 @@ export async function loadFullLedgerInputs(db: SupabaseClient): Promise<{ paymen
       matchStatus: p.match_status,
       memberNames: [...new Set((p.payment_allocations ?? []).map((a) => a.members?.full_name ?? "").filter(Boolean))],
       note: p.note,
+      purpose: p.purpose ?? "monthly",
+      relatedExpenseId: p.related_expense_id,
     })),
     expenses: expenseRows.map((e) => ({
       id: e.id,

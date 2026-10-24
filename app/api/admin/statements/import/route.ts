@@ -144,6 +144,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // The first and last day the statement covers (Nairobi dates), so the Health tab can
+  // compare the fund's total with the statement's closing balance.
+  const statementDates = rowsWithDup
+    .map((r) => r.completionTime.slice(0, 10))
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+    .sort();
+
   let created = 0;
   let failed = 0;
   let firstError: string | null = null;
@@ -249,6 +256,8 @@ export async function POST(req: NextRequest) {
     total_charges: parsed.totalWithdrawn,
     closing_balance_reported: parsed.reportedClosingBalance,
     closing_balance_calculated: parsed.calculatedClosingBalance,
+    period_start: statementDates[0] ?? null,
+    period_end: statementDates[statementDates.length - 1] ?? null,
     integrity_ok: parsed.integrityOk,
     status: failed === 0 ? "confirmed" : "failed",
     note: failed === 0 ? null : `${failed} row(s) could not be saved. First problem: ${firstError}`,

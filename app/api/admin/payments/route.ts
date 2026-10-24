@@ -8,6 +8,12 @@
 //   isn't starting from nothing — these aren't stored in the database,
 //   just computed on the way out.
 //
+// Every payment has a PURPOSE (monthly contribution, booster, recovery of
+// spending, donation from outside, other income: see lib/payment-purpose.ts).
+// Only "monthly" pays off a member's monthly dues; all of it counts in the
+// fund's total. "donation" and "other" are not credited to any member, so
+// they are filed as "ignored" (= not credited to a member) straight away.
+//
 // POST creates one manual payment (kind: manual/adjustment/opening —
 //   never "mpesa", that only ever comes from a statement/Daraja import).
 //   Three ways to identify who it's for, tried in this order:
@@ -21,6 +27,7 @@ import { requireAdmin } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { matchPayment, type PaymentForMatching } from "@/lib/payment-matching";
 import { loadMembersForMatching } from "@/lib/load-members-for-matching";
+import { isPaymentPurpose, type PaymentPurpose } from "@/lib/payment-purpose";
 
 const VALID_STATUSES = ["matched", "needs_confirmation", "unmatched", "ignored"];
 const VALID_KINDS = ["manual", "adjustment", "opening"];
@@ -42,12 +49,14 @@ interface PaymentRow {
   suggested_member_id: string | null;
   suggestion_reason: string | null;
   note: string | null;
+  purpose: string;
+  related_expense_id: string | null;
   created_at: string;
   payment_allocations: { id: string; member_id: string; amount: number; members: { full_name: string } | null }[];
 }
 
 const PAYMENT_COLUMNS =
-  "id, amount, kind, source, mpesa_receipt, payer_name, payer_phone_masked, payer_ref, paid_at, match_status, suggested_member_id, suggestion_reason, note, created_at, payment_allocations(id, member_id, amount, members(full_name))";
+  "id, amount, kind, source, mpesa_receipt, payer_name, payer_phone_masked, payer_ref, paid_at, match_status, suggested_member_id, suggestion_reason, note, purpose, related_expense_id, created_at, payment_allocations(id, member_id, amount, members(full_name))";
 
 export async function GET(req: NextRequest) {
   const auth = await requireAdmin();
@@ -108,6 +117,10 @@ interface CreatePaymentBody {
   payerName?: string;
   payerRef?: string;
   note?: string;
+  /** What the money is for. Defaults to "monthly". */
+  purpose?: string;
+  /** For a recovery payment: the expense it puts back. */
+  relatedExpenseId?: string;
 }
 
 export async function POST(req: NextRequest) {
@@ -134,6 +147,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Only an adjustment can be a negative amount." }, { status: 400 });
   }
 
+  const purpose: PaymentPurpose = body.purpose === undefined ? "monthly" : (isPaymentPurpose(body.purpose) ? body.purpose : "monthly");
+  if (body.purpose !== undefined && !isPaymentPurpose(body.purpose)) {
+    return NextResponse.json({ error: "That payment type is not recognised." }, { status: 400 });
+  }
+
   const paidAt = body.paidAt ? new Date(body.paidAt) : new Date();
   if (Number.isNaN(paidAt.getTime())) {
     return NextResponse.json({ error: "Invalid date." }, { status: 400 });
@@ -141,7 +159,14 @@ export async function POST(req: NextRequest) {
 
   const db = supabaseAdmin();
 
-  let matchStatus: "matched" | "needs_confirmation" | "unmatched" = "unmatched";
+  let relatedExpenseId: string | null = null;
+  if (purpose === "recovery" && body.relatedExpenseId) {
+    const { data: expense } = await db.from("fund_expenses").select("id").eq("id", body.relatedExpenseId).maybeSingle();
+    if (!expense) return NextResponse.json({ error: "The spending you chose to recover was not found." }, { status: 400 });
+    relatedExpenseId = body.relatedExpenseId;
+  }
+
+  let matchStatus: "matched" | "needs_confirmation" | "unmatched" | "ignored" = "unmatched";
   let matchedMemberId: string | null = null;
   let suggestedMemberId: string | null = null;
   let suggestionReason: string | null = null;
@@ -171,11 +196,21 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Gifts from outside and other income are credited to no member: nothing to match.
+  if ((purpose === "donation" || purpose === "other") && !body.memberId && kind === "manual") {
+    matchStatus = "ignored";
+    matchedMemberId = null;
+    suggestedMemberId = null;
+    suggestionReason = null;
+  }
+
   const { data: payment, error: paymentError } = await db
     .from("payments")
     .insert({
       amount,
       kind,
+      purpose,
+      related_expense_id: relatedExpenseId,
       source: "admin",
       payer_name: body.payerName ?? null,
       payer_phone_masked: body.payerPhoneMasked ?? null,

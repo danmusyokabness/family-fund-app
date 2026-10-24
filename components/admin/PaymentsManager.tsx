@@ -2,6 +2,7 @@
 // components/admin/PaymentsManager.tsx
 
 import { useEffect, useState } from "react";
+import { PAYMENT_PURPOSES, PURPOSE_LABEL, PURPOSE_SHORT, type PaymentPurpose } from "@/lib/payment-purpose";
 
 interface MemberOption {
   id: string;
@@ -31,6 +32,8 @@ interface Payment {
   suggested_member_id: string | null;
   suggestion_reason: string | null;
   note: string | null;
+  purpose: string;
+  related_expense_id: string | null;
   payment_allocations: Allocation[];
   candidates?: Candidate[];
 }
@@ -49,7 +52,7 @@ const STATUS_TABS: { key: string; label: string }[] = [
   { key: "needs_confirmation", label: "Needs confirmation" },
   { key: "unmatched", label: "Unmatched" },
   { key: "matched", label: "Matched" },
-  { key: "ignored", label: "Ignored" },
+  { key: "ignored", label: "Not credited to a member" },
 ];
 
 function formatDate(iso: string): string {
@@ -72,6 +75,8 @@ export default function PaymentsManager() {
   const [memberId, setMemberId] = useState("");
   const [payerName, setPayerName] = useState("");
   const [note, setNote] = useState("");
+  const [purpose, setPurpose] = useState<PaymentPurpose>("monthly");
+  const [relatedExpenseId, setRelatedExpenseId] = useState("");
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
@@ -141,11 +146,13 @@ export default function PaymentsManager() {
           memberId: memberId || undefined,
           payerName: !memberId && payerName ? payerName : undefined,
           note,
+          purpose: kind === "manual" ? purpose : undefined,
+          relatedExpenseId: kind === "manual" && purpose === "recovery" && relatedExpenseId ? relatedExpenseId : undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Could not record the payment.");
-      setAmount(""); setPaidAt(""); setMemberId(""); setPayerName(""); setNote("");
+      setAmount(""); setPaidAt(""); setMemberId(""); setPayerName(""); setNote(""); setPurpose("monthly"); setRelatedExpenseId("");
       setShowAddForm(false);
       await loadPayments(statusFilter);
     } catch (err) {
@@ -196,6 +203,34 @@ export default function PaymentsManager() {
     } finally {
       setSavingAssign(null);
     }
+  }
+
+  async function changePurpose(payment: Payment, value: string) {
+    setError(null);
+    const res = await fetch(`/api/admin/payments/${payment.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ purpose: value }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error ?? "Could not change the payment type.");
+    }
+    await loadPayments(statusFilter);
+  }
+
+  async function changeRelatedExpense(payment: Payment, expenseId: string) {
+    setError(null);
+    const res = await fetch(`/api/admin/payments/${payment.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ purpose: "recovery", relatedExpenseId: expenseId || null }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error ?? "Could not link the spending.");
+    }
+    await loadPayments(statusFilter);
   }
 
   async function ignorePayment(payment: Payment) {
@@ -259,9 +294,33 @@ export default function PaymentsManager() {
             <option value="adjustment">Adjustment (can be negative)</option>
             <option value="opening">Opening balance</option>
           </select>
+          {kind === "manual" && (
+            <div className="space-y-1 sm:col-span-2">
+              <select value={purpose} onChange={(e) => setPurpose(e.target.value as PaymentPurpose)} className={`${inputCls} w-full`}>
+                {PAYMENT_PURPOSES.map((p) => (
+                  <option key={p} value={p}>{PURPOSE_LABEL[p]}</option>
+                ))}
+              </select>
+              <p className="text-xs text-ink-soft">
+                {purpose === "monthly" && "Counts toward the member's monthly dues."}
+                {purpose === "booster" && "An extra gift to the fund: credited to the giver but does not pay off any month."}
+                {purpose === "recovery" && "Puts back money that was spent. You can name the spending it replaces."}
+                {purpose === "donation" && "From someone outside the family: in the account, credited to nobody."}
+                {purpose === "other" && "Anything else that is in the account but not a contribution (interest, a reversal, a stray payment)."}
+              </p>
+              {purpose === "recovery" && (
+                <select value={relatedExpenseId} onChange={(e) => setRelatedExpenseId(e.target.value)} className={`${inputCls} w-full`}>
+                  <option value="">Which spending does this replace? (optional)</option>
+                  {expenses.filter((x) => x.kind !== "charge").map((x) => (
+                    <option key={x.id} value={x.id}>{(x.description || x.kind) + " (" + formatDate(x.occurred_at) + ", KES " + x.amount.toLocaleString() + ")"}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
           <input type="date" value={paidAt} onChange={(e) => setPaidAt(e.target.value)} className={inputCls} />
           <select value={memberId} onChange={(e) => setMemberId(e.target.value)} className={inputCls}>
-            <option value="">No member selected (assign later)</option>
+            <option value="">{purpose === "donation" || purpose === "other" ? "No member (not credited to anyone)" : "No member selected (assign later)"}</option>
             {members.map((m) => <option key={m.id} value={m.id}>{m.full_name}</option>)}
           </select>
           {!memberId && (
@@ -288,6 +347,11 @@ export default function PaymentsManager() {
                 <p className="figures font-medium text-ink">
                   KES {payment.amount.toLocaleString()} &middot; {formatDate(payment.paid_at)}
                   <span className="ml-2 text-xs font-normal text-ink-soft">{payment.kind}</span>
+                  {payment.purpose !== "monthly" && (
+                    <span className="ml-2 rounded-full border border-line px-2 py-0.5 text-xs font-normal text-ink-soft">
+                      {PURPOSE_SHORT[(payment.purpose as PaymentPurpose) ?? "monthly"] ?? payment.purpose}
+                    </span>
+                  )}
                 </p>
                 {payment.payer_name && (
                   <p className="text-xs text-ink-soft">
@@ -305,6 +369,32 @@ export default function PaymentsManager() {
                     Suggested: {memberName(payment.suggested_member_id)} &mdash; {payment.suggestion_reason}
                   </p>
                 )}
+                {payment.match_status === "ignored" && (
+                  <p className="mt-1 text-xs text-ink-soft">In the fund&apos;s total, but not credited to any member.</p>
+                )}
+                {payment.kind !== "opening" && payment.kind !== "adjustment" && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-ink-soft">
+                    <label className="flex items-center gap-1">
+                      Type
+                      <select value={payment.purpose} onChange={(e) => changePurpose(payment, e.target.value)} className="rounded-md px-1.5 py-1 text-xs">
+                        {PAYMENT_PURPOSES.map((p) => (
+                          <option key={p} value={p}>{PURPOSE_LABEL[p]}</option>
+                        ))}
+                      </select>
+                    </label>
+                    {payment.purpose === "recovery" && (
+                      <label className="flex items-center gap-1">
+                        Replaces
+                        <select value={payment.related_expense_id ?? ""} onChange={(e) => changeRelatedExpense(payment, e.target.value)} className="rounded-md px-1.5 py-1 text-xs">
+                          <option value="">(not linked)</option>
+                          {expenses.filter((x) => x.kind !== "charge").map((x) => (
+                            <option key={x.id} value={x.id}>{(x.description || x.kind) + " - KES " + x.amount.toLocaleString()}</option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                  </div>
+                )}
                 {payment.match_status === "unmatched" && payment.candidates && payment.candidates.length > 0 && (
                   <p className="mt-1 text-xs text-ink-soft">Possible: {payment.candidates.map((c) => memberName(c.memberId)).join(", ")}</p>
                 )}
@@ -313,13 +403,19 @@ export default function PaymentsManager() {
                 {payment.match_status === "needs_confirmation" && payment.suggested_member_id && !assigning[payment.id] && (
                   <button onClick={() => startAssign(payment, payment.suggested_member_id!)} className="btn-primary rounded px-2 py-1">Confirm</button>
                 )}
-                {payment.match_status !== "ignored" && !assigning[payment.id] && (
+                {!assigning[payment.id] && (
                   <button onClick={() => startAssign(payment)} className="link">
-                    {payment.match_status === "matched" ? "Reassign / split" : "Assign"}
+                    {payment.match_status === "matched" ? "Reassign / split" : payment.match_status === "ignored" ? "Credit to a member" : "Assign"}
                   </button>
                 )}
                 {payment.match_status !== "ignored" && (
-                  <button onClick={() => ignorePayment(payment)} className="text-ink-soft underline">Ignore</button>
+                  <button
+                    onClick={() => ignorePayment(payment)}
+                    className="text-ink-soft underline"
+                    title="Keeps the money in the fund's total but credits it to no member (for example a stray payment)"
+                  >
+                    Not for a member
+                  </button>
                 )}
               </div>
             </div>

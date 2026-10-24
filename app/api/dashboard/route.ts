@@ -62,7 +62,7 @@ export async function GET(req: NextRequest) {
   try {
     const [allocRows, paymentRows, expenseRows] = await Promise.all([
       fetchAllRows((range) =>
-        db.from("payment_allocations").select("member_id, amount, payments(paid_at)").range(range.from, range.to)
+        db.from("payment_allocations").select("member_id, amount, payments(paid_at, purpose)").range(range.from, range.to)
       ),
       fetchAllRows((range) =>
         db.from("payments").select("amount, kind, paid_at, match_status").range(range.from, range.to)
@@ -70,8 +70,8 @@ export async function GET(req: NextRequest) {
       fetchAllRows((range) => db.from("fund_expenses").select("amount").range(range.from, range.to)),
     ]);
 
-    allocations = (allocRows as unknown as { member_id: string; amount: number; payments: { paid_at: string } | null }[]).map(
-      (a) => ({ memberId: a.member_id, amount: a.amount, paidAt: a.payments?.paid_at ?? "" })
+    allocations = (allocRows as unknown as { member_id: string; amount: number; payments: { paid_at: string; purpose: string } | null }[]).map(
+      (a) => ({ memberId: a.member_id, amount: a.amount, paidAt: a.payments?.paid_at ?? "", purpose: a.payments?.purpose })
     );
     payments = (paymentRows as unknown as { amount: number; kind: string; paid_at: string; match_status: string }[]).map(
       (p) => ({ amount: p.amount, kind: p.kind, paidAt: p.paid_at, matchStatus: p.match_status })

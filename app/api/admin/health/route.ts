@@ -11,6 +11,8 @@ import { serverEnv } from "@/lib/env";
 import { nairobiTodayDateString } from "@/lib/dates";
 import { adminAlertPhones, loadDataFreshness, loadSettings } from "@/lib/messaging";
 import { buildHealthChecks, nextScheduledDate, overallStatus } from "@/lib/health";
+import { balanceAsOf, buildFullLedger } from "@/lib/full-ledger";
+import { loadFullLedgerInputs } from "@/lib/ledger-data";
 
 interface MemberRow {
   full_name: string;
@@ -68,6 +70,34 @@ export async function GET() {
       }
     }
 
+    // Does the fund's own total agree with the bank's closing balance on the last imported statement?
+    let statementCheck: { closingBalance: number; asOfDate: string; ledgerBalance: number } | null = null;
+    const { data: lastImports } = await db
+      .from("imports")
+      .select("id, closing_balance_reported, period_end")
+      .eq("status", "confirmed")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const lastImport = lastImports && lastImports.length > 0 ? lastImports[0] : null;
+    if (lastImport && lastImport.closing_balance_reported !== null && lastImport.closing_balance_reported !== undefined) {
+      let asOfDate: string | null = lastImport.period_end ?? null;
+      if (!asOfDate) {
+        // Older imports did not record their last day: use the latest transaction that import brought in.
+        const { data: p } = await db.from("payments").select("paid_at").eq("import_id", lastImport.id).order("paid_at", { ascending: false }).limit(1);
+        const { data: e } = await db.from("fund_expenses").select("occurred_at").eq("import_id", lastImport.id).order("occurred_at", { ascending: false }).limit(1);
+        const latest = [p?.[0]?.paid_at, e?.[0]?.occurred_at].filter(Boolean).sort().pop();
+        if (latest) asOfDate = new Date(new Date(latest as string).getTime() + 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      }
+      if (asOfDate) {
+        const ledger = buildFullLedger(await loadFullLedgerInputs(db));
+        statementCheck = {
+          closingBalance: Number(lastImport.closing_balance_reported),
+          asOfDate,
+          ledgerBalance: balanceAsOf(ledger, asOfDate),
+        };
+      }
+    }
+
     const lastRun = runs && runs.length > 0 ? runs[0] : null;
     const checks = buildHealthChecks({
       now: new Date().toISOString(),
@@ -80,6 +110,7 @@ export async function GET() {
       membersWithoutPhone,
       lastBackupAt: backups && backups.length > 0 ? backups[0].started_at : null,
       alertPhoneCount: (await adminAlertPhones(db, settings)).length,
+      statementCheck,
     });
 
     const reminderDay = Number(settings.reminder_day) || 7;
