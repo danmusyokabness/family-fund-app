@@ -9,7 +9,7 @@ import { requireAdmin } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { serverEnv } from "@/lib/env";
 import { nairobiTodayDateString } from "@/lib/dates";
-import { loadDataFreshness, loadSettings } from "@/lib/messaging";
+import { adminAlertPhones, loadDataFreshness, loadSettings } from "@/lib/messaging";
 import { buildHealthChecks, nextScheduledDate, overallStatus } from "@/lib/health";
 
 interface MemberRow {
@@ -79,6 +79,7 @@ export async function GET() {
       unmatched: unmatched.count ?? 0,
       membersWithoutPhone,
       lastBackupAt: backups && backups.length > 0 ? backups[0].started_at : null,
+      alertPhoneCount: (await adminAlertPhones(db, settings)).length,
     });
 
     const reminderDay = Number(settings.reminder_day) || 7;

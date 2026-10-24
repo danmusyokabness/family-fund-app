@@ -10,6 +10,9 @@
 //      balance above zero who has not already been sent one this month.
 //   3. Fund report: the same for report_day..report_day+2, to every
 //      member with a phone.
+//   4. Admin alert: a text to the admin (Setup phone + member-admins)
+//      when the payment data is old: a heads-up two days before each
+//      monthly text, and a "held back" notice on days a text is held.
 //
 // The 3-day catch-up window means a missed day never skips a whole
 // month, and the database allows only one real text per member, per kind,
@@ -28,7 +31,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { serverEnv } from "@/lib/env";
 import { getAdminSession } from "@/lib/auth";
 import { nairobiTodayDateString, nairobiCurrentMonthKey } from "@/lib/dates";
-import { loadSettings, sendMessages, type SendSummary } from "@/lib/messaging";
+import { loadDataFreshness, loadSettings, sendAdminAlert, sendMessages, type AdminAlertResult, type SendSummary } from "@/lib/messaging";
 
 const WINDOW_DAYS = 3;
 
@@ -80,14 +83,24 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // 4. Tell the admin to import the statement when the data is getting old.
+  //    (Held-back texts are pointless if nobody notices.)
+  let adminAlert: AdminAlertResult | null = null;
+  try {
+    const freshness = await loadDataFreshness(db, today, settings);
+    adminAlert = await sendAdminAlert(db, settings, { dayOfMonth, reminders, report, freshness });
+  } catch {
+    adminAlert = null; // an alert problem must never fail the day's run
+  }
+
   const errorMessage = errors.length > 0 ? errors.join(" | ") : null;
   await db.from("job_runs").insert({
     job: "daily",
     started_at: startedAt,
     finished_at: new Date().toISOString(),
     ok,
-    details: { today, period, inReminderWindow, inReportWindow, reminders, report, error: errorMessage },
+    details: { today, period, inReminderWindow, inReportWindow, reminders, report, adminAlert, error: errorMessage },
   });
 
-  return NextResponse.json({ ok, today, period, inReminderWindow, inReportWindow, reminders, report, error: errorMessage });
+  return NextResponse.json({ ok, today, period, inReminderWindow, inReportWindow, reminders, report, adminAlert, error: errorMessage });
 }

@@ -29,6 +29,8 @@ import { buildReportMessages, smsSegments } from "./report.ts";
 import { buildDashboard } from "./dashboard.ts";
 import { fetchAllRows } from "./pagination.ts";
 import { sendSms } from "./sms.ts";
+import { buildAdminAlert } from "./admin-alerts.ts";
+import { normalizePhone } from "./phone.ts";
 
 export type MessageKind = "reminder" | "report";
 export type PlanStatus = "ready" | "already_sent" | "no_phone" | "no_balance_due" | "pending_confirmation";
@@ -307,4 +309,70 @@ export async function sendMessages(
   }
 
   return { kind, period: plan.period, attempted: toSend.length, sent, dryRun, failed, failures };
+}
+
+/**
+ * Everyone who should be told to import the statement: the phone number
+ * saved in Setup, plus the primary phone of every active member who is an
+ * admin. Each number appears once, in canonical form.
+ */
+export async function adminAlertPhones(db: SupabaseClient, settings: Record<string, string>): Promise<string[]> {
+  const phones = new Set<string>();
+  const fromSetup = normalizePhone(settings.admin_alert_phone ?? "");
+  if (fromSetup) phones.add(fromSetup);
+
+  const { data } = await db
+    .from("members")
+    .select("member_phones(phone_number, is_primary)")
+    .eq("is_active", true)
+    .eq("is_admin", true)
+    .returns<{ member_phones: { phone_number: string; is_primary: boolean }[] | null }[]>();
+  for (const m of data ?? []) {
+    const primary = (m.member_phones ?? []).find((p) => p.is_primary)?.phone_number;
+    const canonical = primary ? normalizePhone(primary) : null;
+    if (canonical) phones.add(canonical);
+  }
+  return [...phones];
+}
+
+export interface AdminAlertResult {
+  message: string;
+  recipients: number;
+  /** True when nothing real was sent (live sending off). */
+  dryRun: boolean;
+  failed: number;
+}
+
+/** Sends the "import the statement" alert, if there is one to send. Never throws: an alert must not stop the daily job. */
+export async function sendAdminAlert(
+  db: SupabaseClient,
+  settings: Record<string, string>,
+  run: { dayOfMonth: number; reminders: SendSummary | null; report: SendSummary | null; freshness: DataFreshness }
+): Promise<AdminAlertResult | null> {
+  try {
+    const message = buildAdminAlert({
+      dayOfMonth: run.dayOfMonth,
+      reminderDay: Number(settings.reminder_day) || 7,
+      reportDay: Number(settings.report_day) || 15,
+      freshness: run.freshness,
+      held: { reminder: Boolean(run.reminders?.held), report: Boolean(run.report?.held) },
+      fundName: settings.fund_name,
+      siteUrl: settings.site_url,
+    });
+    if (!message) return null;
+
+    const phones = await adminAlertPhones(db, settings);
+    if (phones.length === 0) return null;
+
+    let failed = 0;
+    let dryRun = true;
+    for (const phone of phones) {
+      const result = await sendSms(phone, message);
+      if (!result.ok) failed++;
+      else if (!result.dryRun) dryRun = false;
+    }
+    return { message, recipients: phones.length, dryRun, failed };
+  } catch {
+    return null;
+  }
 }

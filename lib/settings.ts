@@ -75,6 +75,16 @@ export const SETTINGS_SCHEMA: SettingField[] = [
     max: 28,
   },
   {
+    key: "admin_alert_phone",
+    label: "Your phone number, for reminders to import the statement",
+    type: "string",
+    default: "",
+    required: false,
+    helpText:
+      "When the payment data is getting old, a text is sent here two days before each monthly text is due, and again on each day an automatic " +
+      "text is held back, so you remember to import the latest statement. Any member who is marked as an admin is also told. Leave empty to rely on the Health tab only.",
+  },
+  {
     key: "auto_send_max_import_age_days",
     label: "Hold the automatic texts if the payment data is older than (days)",
     type: "integer",

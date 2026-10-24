@@ -288,6 +288,7 @@ const HEALTHY: HealthInput = {
   unmatched: 0,
   membersWithoutPhone: [],
   lastBackupAt: hoursBefore(24 * 3),
+  alertPhoneCount: 1,
 };
 const statusOfCheck = (input: HealthInput, key: string) => buildHealthChecks(input).find((c) => c.key === key)?.status;
 
@@ -338,6 +339,11 @@ test("health: a backup is amber if never taken or over 35 days old", () => {
   assert.equal(statusOfCheck({ ...HEALTHY, lastBackupAt: hoursBefore(24 * 34) }, "backup"), "ok");
 });
 
+test("health: amber when nobody is set up to be reminded to import the statement", () => {
+  assert.equal(statusOfCheck({ ...HEALTHY, alertPhoneCount: 0 }, "alerts"), "warn");
+  assert.equal(statusOfCheck({ ...HEALTHY, alertPhoneCount: 2 }, "alerts"), "ok");
+});
+
 test("health: the overall status is the worst single check", () => {
   assert.equal(overallStatus([{ key: "a", label: "a", status: "ok", detail: "" }, { key: "b", label: "b", status: "warn", detail: "" }]), "warn");
   assert.equal(overallStatus([{ key: "a", label: "a", status: "warn", detail: "" }, { key: "b", label: "b", status: "bad", detail: "" }]), "bad");
@@ -349,4 +355,99 @@ test("nextScheduledDate: this month if the day has not passed (today counts), ot
   assert.equal(nextScheduledDate("2026-10-22", 7), "2026-11-07");
   assert.equal(nextScheduledDate("2026-12-22", 15), "2027-01-15");
   assert.equal(nextScheduledDate("2026-10-22", 31), "2026-10-28"); // clamped so it exists in every month
+});
+
+// ---------------------------------------------------------------------
+// lib/admin-alerts.ts + sendAdminAlert: telling the admin to import the statement
+// ---------------------------------------------------------------------
+import { buildAdminAlert, headsUpDay, ordinal, type AdminAlertInput } from "../lib/admin-alerts.ts";
+const { sendAdminAlert, adminAlertPhones } = await import("../lib/messaging.ts");
+
+const ALERT_BASE: AdminAlertInput = {
+  dayOfMonth: 3,
+  reminderDay: 7,
+  reportDay: 15,
+  freshness: { stale: true, ageDays: 9 },
+  held: { reminder: false, report: false },
+  fundName: "Test Fund",
+  siteUrl: "https://example.test/",
+};
+
+test("ordinal and headsUpDay: 1st, 2nd, 3rd, 11th... and two days before, never before the 1st", () => {
+  assert.deepEqual([1, 2, 3, 4, 7, 11, 12, 13, 15, 21, 22, 23].map(ordinal), ["1st", "2nd", "3rd", "4th", "7th", "11th", "12th", "13th", "15th", "21st", "22nd", "23rd"]);
+  assert.equal(headsUpDay(7), 5);
+  assert.equal(headsUpDay(15), 13);
+  assert.equal(headsUpDay(2), 1);
+  assert.equal(headsUpDay(1), 1);
+});
+
+test("admin alert: nothing is sent while the payment data is fresh", () => {
+  assert.equal(buildAdminAlert({ ...ALERT_BASE, dayOfMonth: 5, freshness: { stale: false, ageDays: 1 } }), null);
+  assert.equal(buildAdminAlert({ ...ALERT_BASE, freshness: { stale: false, ageDays: 0 }, held: { reminder: true, report: false } }), null);
+});
+
+test("admin alert: a heads-up two days before the reminder and before the report, only on those days", () => {
+  const reminderHeadsUp = buildAdminAlert({ ...ALERT_BASE, dayOfMonth: 5 });
+  assert.ok(reminderHeadsUp?.includes("reminder on the 7th"));
+  assert.ok(reminderHeadsUp?.includes("9 day(s) old"));
+  assert.ok(reminderHeadsUp?.includes("https://example.test/admin"));
+  const reportHeadsUp = buildAdminAlert({ ...ALERT_BASE, dayOfMonth: 13 });
+  assert.ok(reportHeadsUp?.includes("fund report on the 15th"));
+  assert.equal(buildAdminAlert({ ...ALERT_BASE, dayOfMonth: 4 }), null);
+  assert.equal(buildAdminAlert({ ...ALERT_BASE, dayOfMonth: 6 }), null);
+});
+
+test("admin alert: both texts due close together are mentioned in one message", () => {
+  const msg = buildAdminAlert({ ...ALERT_BASE, dayOfMonth: 5, reportDay: 7 });
+  assert.ok(msg?.includes("reminder on the 7th") && msg.includes("fund report on the 7th"));
+});
+
+test("admin alert: when a text was held back, say so (this takes precedence over the heads-up), and handle 'never imported'", () => {
+  const held = buildAdminAlert({ ...ALERT_BASE, dayOfMonth: 7, held: { reminder: true, report: false } });
+  assert.ok(held?.includes("automatic reminder text was held back"));
+  assert.ok(held?.includes("next daily run"));
+  const both = buildAdminAlert({ ...ALERT_BASE, dayOfMonth: 15, held: { reminder: true, report: true } });
+  assert.ok(both?.includes("reminder and report"));
+  const never = buildAdminAlert({ ...ALERT_BASE, freshness: { stale: true, ageDays: null }, held: { reminder: true, report: false } });
+  assert.ok(never?.includes("no statement has been imported yet"));
+});
+
+const ADMIN_TABLES = (): Record<string, Row[]> => ({
+  members: [
+    { id: "a", full_name: "Admin Member", is_active: true, is_admin: true, member_phones: [{ phone_number: "254700000001", is_primary: true }] },
+    { id: "b", full_name: "Plain Member", is_active: true, is_admin: false, member_phones: [{ phone_number: "254700000002", is_primary: true }] },
+    { id: "c", full_name: "Gone Admin", is_active: false, is_admin: true, member_phones: [{ phone_number: "254700000003", is_primary: true }] },
+  ],
+});
+
+test("adminAlertPhones: the Setup phone plus active member-admins, each once, nobody else", async () => {
+  const phones = await adminAlertPhones(fakeDb(ADMIN_TABLES(), []), { admin_alert_phone: "0711 222 333" });
+  assert.deepEqual([...phones].sort(), ["254700000001", "254711222333"]);
+  const same = await adminAlertPhones(fakeDb(ADMIN_TABLES(), []), { admin_alert_phone: "0700000001" });
+  assert.deepEqual(same, ["254700000001"]); // the same person is not texted twice
+  assert.deepEqual(await adminAlertPhones(fakeDb(ADMIN_TABLES(), []), { admin_alert_phone: "not a number" }), ["254700000001"]);
+});
+
+test("sendAdminAlert: sends (as a dry run while live sending is off) when data is stale and someone should be told", async () => {
+  const result = await sendAdminAlert(fakeDb(ADMIN_TABLES(), []), { ...SETTINGS, admin_alert_phone: "0711222333" }, {
+    dayOfMonth: 7,
+    reminders: { kind: "reminder", period: PERIOD, attempted: 0, sent: 0, dryRun: true, failed: 0, failures: [], held: "old data" },
+    report: null,
+    freshness: { lastUpdatedAt: null, ageDays: 9, maxAgeDays: 4, stale: true },
+  });
+  assert.ok(result);
+  assert.equal(result?.recipients, 2);
+  assert.equal(result?.dryRun, true);
+  assert.ok(result?.message.includes("held back"));
+});
+
+test("sendAdminAlert: says nothing when the data is fresh, or when there is nobody to tell", async () => {
+  const fresh = await sendAdminAlert(fakeDb(ADMIN_TABLES(), []), SETTINGS, {
+    dayOfMonth: 7, reminders: null, report: null, freshness: { lastUpdatedAt: null, ageDays: 0, maxAgeDays: 4, stale: false },
+  });
+  assert.equal(fresh, null);
+  const nobody = await sendAdminAlert(fakeDb({ members: [] }, []), SETTINGS, {
+    dayOfMonth: 5, reminders: null, report: null, freshness: { lastUpdatedAt: null, ageDays: 9, maxAgeDays: 4, stale: true },
+  });
+  assert.equal(nobody, null);
 });

@@ -28,6 +28,8 @@ export interface HealthInput {
   membersWithoutPhone: string[];
   /** When the last full backup was downloaded, or null. */
   lastBackupAt: string | null;
+  /** How many phones will be texted when the payment data is old (Setup phone + member-admins). */
+  alertPhoneCount: number;
 }
 
 const HOUR = 60 * 60 * 1000;
@@ -85,6 +87,23 @@ export function buildHealthChecks(input: HealthInput): HealthCheck[] {
       detail: input.freshness.ageDays === 0 ? "Updated today." : `Last updated ${input.freshness.ageDays} day(s) ago.`,
     });
   }
+
+  // 2b. Is anyone set up to be told to import the statement?
+  checks.push(
+    input.alertPhoneCount > 0
+      ? {
+          key: "alerts",
+          label: "Import reminders for you",
+          status: "ok",
+          detail: `${input.alertPhoneCount} phone(s) will be texted two days before each monthly text, and whenever one is held back, if the payment data is old.`,
+        }
+      : {
+          key: "alerts",
+          label: "Import reminders for you",
+          status: "warn",
+          detail: "No phone is set up to remind you to import the statement. Add yours in Setup (\"Your phone number, for reminders to import the statement\"), or mark a member as an admin.",
+        }
+  );
 
   // 3. Texting
   if (input.smsLive && !input.atConfigured) {
