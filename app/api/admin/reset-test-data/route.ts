@@ -5,18 +5,34 @@
 // wiping the fund's settings (Till, target, message wording) or the
 // family tree, which aren't "test data" in the same sense.
 //
-// Requires the exact confirmation phrase in the request body, so this
-// can never be triggered by an accidental click or a repeated request.
+// THREE locks, because this deletes real data:
+//   1. only the main (superadmin) login may use it, never a member-admin;
+//   2. it is OFF unless the ALLOW_TEST_DATA_RESET setting is switched on in
+//      Vercel (leave it off once the fund is live);
+//   3. the exact confirmation phrase must be sent, so it can never be
+//      triggered by an accidental click or a repeated request.
 
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/auth";
+import { requireSuperAdmin } from "@/lib/auth";
+import { serverEnv } from "@/lib/env";
 import { supabaseAdmin } from "@/lib/supabase";
 
 const CONFIRMATION_PHRASE = "DELETE ALL TEST DATA";
 
 export async function POST(req: NextRequest) {
-  const auth = await requireAdmin();
+  const auth = await requireSuperAdmin();
   if (!auth.ok) return auth.response;
+
+  if (!serverEnv().allowTestDataReset) {
+    return NextResponse.json(
+      {
+        error:
+          "Clearing data is switched off, because it deletes real members and payments. It exists only for testing before the fund goes live. " +
+          "To allow it for a moment, set ALLOW_TEST_DATA_RESET to true in Vercel's Environment Variables and redeploy, then set it back to false.",
+      },
+      { status: 403 }
+    );
+  }
 
   let body: { confirm?: string };
   try {

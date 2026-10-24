@@ -17,6 +17,33 @@ const nextConfig: NextConfig = {
       canvas: "./lib/canvas-stub.js",
     },
   },
+
+  // Security headers on every page and every API reply.
+  //   * X-Frame-Options / frame-ancestors: nobody can put this site inside
+  //     another page (clickjacking).
+  //   * nosniff, Referrer-Policy, Permissions-Policy: browser safety defaults.
+  //   * Strict-Transport-Security: browsers insist on HTTPS from now on.
+  //   * X-Robots-Tag: this is a private family site, so search engines are
+  //     told not to list it.
+  // The Content-Security-Policy is deliberately small (it does not restrict
+  // scripts, which Next.js needs to run its own inline ones): it blocks
+  // framing, plugin content and form posts to other sites.
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=()" },
+          { key: "Strict-Transport-Security", value: "max-age=63072000" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+          { key: "Content-Security-Policy", value: "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

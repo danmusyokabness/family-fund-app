@@ -71,6 +71,8 @@ export function serverEnv() {
     atUsername: optional("AT_USERNAME"),
     atSenderId: optional("AT_SENDER_ID"),
     smsLive: optionalBoolean("SMS_LIVE", false),
+    // OFF by default. Lets the superadmin wipe members, payments and expenses (testing only).
+    allowTestDataReset: optionalBoolean("ALLOW_TEST_DATA_RESET", false),
 
     darajaConsumerKey: optional("DARAJA_CONSUMER_KEY"),
     darajaConsumerSecret: optional("DARAJA_CONSUMER_SECRET"),

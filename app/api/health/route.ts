@@ -22,6 +22,7 @@
 
 import { NextResponse } from "next/server";
 import { serverEnv } from "@/lib/env";
+import { getAdminSession } from "@/lib/auth";
 
 function describeError(err: unknown): string {
   if (err instanceof Error) return err.message || err.name || "Unknown error (no message)";
@@ -33,13 +34,18 @@ function describeError(err: unknown): string {
 }
 
 export async function GET() {
+  // Anyone may ask "is it up?" (for example an uptime checker), but the
+  // details (which setting is missing, what the database answered) are
+  // only shown to a logged-in admin.
+  const isAdmin = await getAdminSession();
+
   // ---- 1. Environment variables ---------------------------------------
   let env: ReturnType<typeof serverEnv>;
   try {
     env = serverEnv();
   } catch (err) {
     return NextResponse.json(
-      { ok: false, env: { ok: false, error: describeError(err) }, database: { ok: false } },
+      isAdmin ? { ok: false, env: { ok: false, error: describeError(err) }, database: { ok: false } } : { ok: false },
       { status: 500 }
     );
   }
@@ -88,6 +94,10 @@ export async function GET() {
   }
 
   const ok = databaseOk;
+
+  if (!isAdmin) {
+    return NextResponse.json({ ok }, { status: ok ? 200 : 500 });
+  }
 
   return NextResponse.json(
     {
