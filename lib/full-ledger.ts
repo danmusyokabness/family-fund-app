@@ -193,7 +193,7 @@ export function buildFullLedger(input: { payments: FullLedgerPayment[]; expenses
       raws.push({ id: `p-${p.id}`, at: p.paidAt, category: "donation", label: "Donation from outside", detail: null, money, awaitingMember: false });
     } else if (purpose === "other" || p.matchStatus === "ignored") {
       // Real money in the account that is credited to no member.
-      raws.push({ id: `p-${p.id}`, at: p.paidAt, category: "other_income", label: "Other income", detail: "Not credited to a member", money, awaitingMember: false });
+      raws.push({ id: `p-${p.id}`, at: p.paidAt, category: "other_income", label: "Other income", detail: "Stray payment, credited to no member", money, awaitingMember: false });
     } else {
       const awaiting = names.length === 0;
       raws.push({
@@ -306,4 +306,50 @@ export function balanceAsOf(ledger: FullLedger, date: string): number {
     }
   }
   return 0;
+}
+
+// ---------------------------------------------------------------------
+// "Other income and notes": everything in the account that is NOT a
+// member's monthly dues, for the notes section under the main ledger, plus
+// the sum that shows how it all adds up to the Total in account.
+// ---------------------------------------------------------------------
+export interface OtherIncomeSummary {
+  /** Newest first: boosters, recoveries, donations, other income (stray payments) and payments still waiting to be matched. */
+  items: LedgerEntry[];
+  /** Added up. */
+  total: number;
+  /** Monthly contributions that are already credited to members. */
+  monthlyContributions: number;
+  /** Opening balance and adjustments, net (0 when there are none). */
+  openingAndAdjustments: number;
+  /** Withdrawals + transaction charges + other expenses. */
+  spent: number;
+  /** The Total in account. monthlyContributions + total + openingAndAdjustments - spent always equals it. */
+  balance: number;
+}
+
+export function summariseOtherIncome(ledger: FullLedger): OtherIncomeSummary {
+  const items: LedgerEntry[] = [];
+  for (const month of ledger.months) {
+    for (const entry of month.entries) {
+      const otherIncome =
+        entry.category === "booster" ||
+        entry.category === "recovery" ||
+        entry.category === "donation" ||
+        entry.category === "other_income" ||
+        (entry.category === "contribution" && entry.awaitingMember);
+      if (otherIncome) items.push(entry);
+    }
+  }
+  const total = round2(items.reduce((sum, e) => sum + e.money, 0));
+  const awaiting = round2(items.filter((e) => e.category === "contribution").reduce((sum, e) => sum + e.money, 0));
+  const c = ledger.byCategory;
+  return {
+    items,
+    total,
+    monthlyContributions: round2(c.contribution - awaiting),
+    openingAndAdjustments: round2(c.opening + c.adjustment),
+    spent: round2(c.withdrawal + c.charge + c.other),
+    balance: ledger.balance,
+  };
 }

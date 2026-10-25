@@ -440,3 +440,62 @@ test("balanceAsOf gives the fund's balance at the end of a date, for comparing w
   assert.equal(balanceAsOf(ledger, "2026-09-20"), 1290);
   assert.equal(balanceAsOf(ledger, "2026-12-31"), 1290);
 });
+
+// ---------------------------------------------------------------------
+// The "Other income and notes" section under the main ledger
+// ---------------------------------------------------------------------
+import { summariseOtherIncome } from "../lib/full-ledger.ts";
+
+test("other income notes: boosters, recoveries, donations, stray payments and unmatched payments, newest first; credited monthly money is left out", () => {
+  const ledger = buildFullLedger({
+    payments: [
+      pay("m1", 300, "2026-09-03T08:00:00Z"), // a normal, credited monthly contribution
+      pay("b1", 2000, "2026-09-04T08:00:00Z", { purpose: "booster", memberNames: ["Ann One"] }),
+      pay("s1", 105, "2026-09-24T05:00:00Z", { matchStatus: "ignored", memberNames: [], purpose: "other" }), // the stray payment
+      pay("u1", 300, "2026-09-26T08:00:00Z", { matchStatus: "unmatched", memberNames: [] }), // waiting to be matched
+      pay("d1", 500, "2026-09-10T08:00:00Z", { purpose: "donation", memberNames: [] }),
+    ],
+    expenses: [],
+  });
+  const summary = summariseOtherIncome(ledger);
+  assert.deepEqual(summary.items.map((e) => e.id), ["p-u1", "p-s1", "p-d1", "p-b1"]); // newest first, m1 not included
+  assert.equal(summary.total, 2905);
+  assert.equal(summary.monthlyContributions, 300);
+});
+
+test("other income notes: the sum shown always adds up to the Total in account", () => {
+  const ledger = buildFullLedger({
+    payments: [
+      pay("o", 1000, "2026-08-01T08:00:00Z", { kind: "opening" }),
+      pay("a", -50, "2026-08-02T08:00:00Z", { kind: "adjustment", note: "Correction" }),
+      pay("m1", 6000, "2026-09-03T08:00:00Z"),
+      pay("b1", 2000, "2026-09-04T08:00:00Z", { purpose: "booster", memberNames: ["Ann One"] }),
+      pay("r1", 1500, "2026-09-05T08:00:00Z", { purpose: "recovery", memberNames: ["Bea Two"], relatedExpenseId: "w1" }),
+      pay("s1", 105, "2026-09-24T05:00:00Z", { matchStatus: "ignored", memberNames: [], purpose: "other" }),
+      pay("u1", 300, "2026-09-26T08:00:00Z", { matchStatus: "needs_confirmation", memberNames: [] }),
+    ],
+    expenses: [exp("w1", "withdrawal", 4000, "2026-09-01T08:00:00Z", "Hospital bill"), exp("c1", "charge", 56.59, "2026-09-03T08:00:00Z"), exp("x1", "other", 20, "2026-09-07T08:00:00Z", "Bank fee")],
+  });
+  const s = summariseOtherIncome(ledger);
+  assert.equal(Math.round((s.monthlyContributions + s.total + s.openingAndAdjustments - s.spent) * 100) / 100, s.balance);
+  assert.equal(s.balance, ledger.balance);
+  assert.equal(s.monthlyContributions, 6000);
+  assert.equal(s.total, 2000 + 1500 + 105 + 300);
+  assert.equal(s.openingAndAdjustments, 950);
+  assert.equal(s.spent, 4076.59);
+});
+
+test("other income notes: nothing to list when all money is credited monthly contributions", () => {
+  const summary = summariseOtherIncome(buildFullLedger({ payments: [pay("m1", 300, "2026-09-03T08:00:00Z")], expenses: [exp("c", "charge", 3.3, "2026-09-03T08:00:00Z")] }));
+  assert.deepEqual(summary.items, []);
+  assert.equal(summary.total, 0);
+  assert.equal(summary.monthlyContributions, 300);
+  assert.equal(summary.balance, 296.7);
+});
+
+test("a stray payment is described as other income, in plain words", () => {
+  const ledger = buildFullLedger({ payments: [pay("s1", 105, "2026-09-24T05:00:00Z", { matchStatus: "ignored", memberNames: [], purpose: "other" })], expenses: [] });
+  const entry = ledger.months[0].entries[0];
+  assert.equal(entry.label, "Other income");
+  assert.equal(entry.detail, "Stray payment, credited to no member");
+});

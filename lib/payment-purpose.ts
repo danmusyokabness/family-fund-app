@@ -23,9 +23,11 @@
 //             be linked to the withdrawal it replaces, so the fund can show
 //             how much of that spending has been recovered.
 //   donation  A gift from someone outside the family. Nobody is credited.
-//   other     Any other money in that is not a monthly contribution: a
-//             stray payment that cannot be attributed, an M-PESA reversal,
-//             interest. Counted in the account, credited to nobody.
+//   other     "Other income": money that is in the account but is nobody's
+//             contribution. Typically a STRAY payment: someone sent money to
+//             this Till by mistake (it is used for nothing else), or an
+//             M-PESA reversal, or interest. Counted in the account,
+//             credited to nobody.
 
 export const PAYMENT_PURPOSES = ["monthly", "booster", "recovery", "donation", "other"] as const;
 export type PaymentPurpose = (typeof PAYMENT_PURPOSES)[number];
@@ -35,7 +37,7 @@ export const PURPOSE_LABEL: Record<PaymentPurpose, string> = {
   booster: "Extra contribution (booster)",
   recovery: "Recovery of spending",
   donation: "Donation from outside",
-  other: "Other income",
+  other: "Other income (stray payment)",
 };
 
 /** Short wording for badges and ledger lines. */

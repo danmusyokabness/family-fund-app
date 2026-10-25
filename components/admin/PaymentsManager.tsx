@@ -52,7 +52,7 @@ const STATUS_TABS: { key: string; label: string }[] = [
   { key: "needs_confirmation", label: "Needs confirmation" },
   { key: "unmatched", label: "Unmatched" },
   { key: "matched", label: "Matched" },
-  { key: "ignored", label: "Not credited to a member" },
+  { key: "ignored", label: "Other income" },
 ];
 
 function formatDate(iso: string): string {
@@ -370,7 +370,7 @@ export default function PaymentsManager() {
                   </p>
                 )}
                 {payment.match_status === "ignored" && (
-                  <p className="mt-1 text-xs text-ink-soft">In the fund&apos;s total, but not credited to any member.</p>
+                  <p className="mt-1 text-xs text-ink-soft">Other income: in the fund&apos;s total, credited to no member (for example a stray payment sent to the Till by mistake).</p>
                 )}
                 {payment.kind !== "opening" && payment.kind !== "adjustment" && (
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-ink-soft">
@@ -405,16 +405,16 @@ export default function PaymentsManager() {
                 )}
                 {!assigning[payment.id] && (
                   <button onClick={() => startAssign(payment)} className="link">
-                    {payment.match_status === "matched" ? "Reassign / split" : payment.match_status === "ignored" ? "Credit to a member" : "Assign"}
+                    {payment.match_status === "matched" ? "Reassign / split" : payment.match_status === "ignored" ? "Credit to a member instead" : "Assign"}
                   </button>
                 )}
                 {payment.match_status !== "ignored" && (
                   <button
                     onClick={() => ignorePayment(payment)}
                     className="text-ink-soft underline"
-                    title="Keeps the money in the fund's total but credits it to no member (for example a stray payment)"
+                    title="For a stray payment sent to the Till by mistake: it stays in the fund's total as other income, credited to no member"
                   >
-                    Not for a member
+                    Mark as other income
                   </button>
                 )}
               </div>

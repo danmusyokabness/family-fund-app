@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from "react";
 import type { DashboardResult, CellStatus } from "@/lib/dashboard";
+import OtherIncomeNotes from "./OtherIncomeNotes";
 
 type ApiResult = DashboardResult & { fundName: string; tillNumber: string };
 
@@ -165,6 +166,7 @@ export default function MemberDashboard() {
           <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm align-middle" style={{ background: "var(--ochre-soft)" }} /> Unpaid / partial</span>
           <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm align-middle" style={{ background: "var(--steel-soft)" }} /> Prepaid ahead</span>
         </div>
+        <OtherIncomeNotes />
         <div className="border-t border-line px-4 py-3 text-sm">
           <a href="/ledger" className="link">Show full ledger</a>
           <span className="ml-2 text-xs text-ink-soft">withdrawals, M-PESA charges and every other movement of money</span>
