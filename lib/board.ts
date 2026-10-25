@@ -95,3 +95,37 @@ export function groupPrivateThreads(rows: BoardRow[], memberNames: Record<string
   }
   return threads.sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
 }
+
+/** A message_board database row as a BoardRow. */
+export interface BoardDbRow {
+  id: string;
+  member_id: string | null;
+  sender_name: string;
+  content: string;
+  is_private: boolean;
+  is_from_admin: boolean | null;
+  created_at: string;
+  read_at: string | null;
+  deleted_at: string | null;
+}
+
+export function boardRowFromDb(r: BoardDbRow): BoardRow {
+  return {
+    id: r.id,
+    memberId: r.member_id,
+    senderName: r.sender_name,
+    content: r.content,
+    isPrivate: r.is_private,
+    isFromAdmin: r.is_from_admin === true,
+    createdAt: r.created_at,
+    readAt: r.read_at,
+    deletedAt: r.deleted_at,
+  };
+}
+
+/** Who may remove a message: an admin may remove any; an author may remove their own PUBLIC post. Private messages are removed by an admin only. */
+export function canRemoveMessage(row: BoardRow, who: { memberId: string | null; isAdmin: boolean }): boolean {
+  if (row.deletedAt) return false;
+  if (who.isAdmin) return true;
+  return !row.isPrivate && who.memberId !== null && row.memberId === who.memberId && !row.isFromAdmin;
+}

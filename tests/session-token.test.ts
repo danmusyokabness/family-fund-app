@@ -62,7 +62,7 @@ const routeFiles = (): string[] =>
 
 // The only API routes that are meant to be open to anyone. Everything else must check who is asking.
 const PUBLIC_ROUTES = ["auth/admin-login/route.ts", "auth/member-login/route.ts", "auth/logout/route.ts", "health/route.ts"];
-const GUARD = /requireSuperAdmin|requireAdmin|requireMember|getMemberSession|getAdminSession|getAdminContext|isCronCall/;
+const GUARD = /requireSuperAdmin|requireAdmin|requireMember|getMemberSession|getAdminSession|getAdminContext|getActor|isCronCall/;
 
 test("security: every API route checks who is asking, except the few meant to be public", () => {
   const routes = routeFiles();
@@ -115,4 +115,22 @@ test("security: no password fallback or pasted key is written into the applicati
     }
   }
   assert.deepEqual(offenders, []);
+});
+
+test("security: the family tree never sends phone numbers to non-admins, and the board only ever returns a member's own private thread", () => {
+  const tree = read("app/api/tree/route.ts");
+  assert.ok(tree.includes("toPublicNode(n, actor.isAdmin)"), "tree nodes must go through toPublicNode with the viewer's admin status");
+  assert.ok(tree.includes("delete body.phone"), "a non-admin must not be able to set a phone number");
+  const board = read("app/api/board/route.ts");
+  assert.ok(board.includes("visibleToMember"), "every board row must be checked with visibleToMember");
+  assert.ok(/\.eq\("member_id", actor\.memberId\)/.test(board), "the private thread query must ask only for this member's rows");
+  assert.ok(read("app/api/admin/board/route.ts").includes("requireAdmin"), "the inbox is admin only");
+  assert.ok(read("app/api/admin/tree/undo/route.ts").includes("requireAdmin"), "undo is admin only");
+});
+
+test("security: a member's own place in the tree can never be removed, and a removal is never permanent", () => {
+  const route = read("app/api/tree/[id]/route.ts");
+  assert.ok(route.includes("node.memberId"), "removing a member's own entry must be refused");
+  assert.ok(route.includes("deleted_at"), "removal must be a soft delete");
+  assert.ok(!/\.delete\(\)/.test(route), "the tree route must never hard-delete a row");
 });

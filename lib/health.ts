@@ -30,6 +30,8 @@ export interface HealthInput {
   lastBackupAt: string | null;
   /** How many phones will be texted when the payment data is old (Setup phone + member-admins). */
   alertPhoneCount: number;
+  /** Private messages from members that the admin has not read yet. */
+  unreadMessages: number;
   /**
    * The last imported statement's closing balance, and what the fund's own
    * records say the balance was at the end of that statement's last day.
@@ -134,6 +136,18 @@ export function buildHealthChecks(input: HealthInput): HealthCheck[] {
           status: "warn",
           detail: "No phone is set up to remind you to import the statement. Add yours in Setup (\"Your phone number, for reminders to import the statement\"), or mark a member as an admin.",
         }
+  );
+
+  // 2c. Messages from members waiting for the admin
+  checks.push(
+    input.unreadMessages > 0
+      ? {
+          key: "messages",
+          label: "Messages from members",
+          status: "warn",
+          detail: `${input.unreadMessages} private message(s) are waiting for you in the Messages tab.`,
+        }
+      : { key: "messages", label: "Messages from members", status: "ok", detail: "No unread messages." }
   );
 
   // 3. Texting

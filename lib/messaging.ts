@@ -381,3 +381,22 @@ export async function sendAdminAlert(
     return null;
   }
 }
+
+/**
+ * Tells the admin(s) by text that a member has written to them privately,
+ * so a message is not left unread. Best effort and never throws: it must not
+ * make sending a message fail. While live sending is off it is only a dry run.
+ */
+export async function notifyAdminsOfPrivateMessage(db: SupabaseClient, fromName: string): Promise<{ recipients: number } | null> {
+  try {
+    const settings = await loadSettings(db);
+    const phones = await adminAlertPhones(db, settings);
+    if (phones.length === 0) return null;
+    const site = settings.site_url ? ` ${settings.site_url.replace(/\/+$/, "")}/admin` : "";
+    const message = `${settings.fund_name}: ${fromName} sent you a private message on the family board. Open the Messages tab to read it.${site}`;
+    for (const phone of phones) await sendSms(phone, message);
+    return { recipients: phones.length };
+  } catch {
+    return null;
+  }
+}

@@ -98,6 +98,14 @@ export async function GET() {
       }
     }
 
+    const unreadMessages = await db
+      .from("message_board")
+      .select("id", { count: "exact", head: true })
+      .eq("is_private", true)
+      .eq("is_from_admin", false)
+      .is("read_at", null)
+      .is("deleted_at", null);
+
     const lastRun = runs && runs.length > 0 ? runs[0] : null;
     const checks = buildHealthChecks({
       now: new Date().toISOString(),
@@ -111,6 +119,7 @@ export async function GET() {
       lastBackupAt: backups && backups.length > 0 ? backups[0].started_at : null,
       alertPhoneCount: (await adminAlertPhones(db, settings)).length,
       statementCheck,
+      unreadMessages: unreadMessages.count ?? 0,
     });
 
     const reminderDay = Number(settings.reminder_day) || 7;

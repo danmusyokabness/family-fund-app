@@ -188,7 +188,11 @@ Record bank withdrawals and other expenses (not M-PESA charges, which come in wi
 
 ---
 
+## The family tree and the board
+
+* **Family tree** (menu: Family tree). The first time a member opens it they are asked "Where are you in the family?" and must pick their place (take over an existing entry that is them, or add themselves under their parent). Everyone can then add people and fix details. Every change is recorded at the bottom of the page, and **you (admin) will see an Undo button** next to each one. Nothing is ever deleted for good. Phone numbers are visible to admins only. Tip: fill in **dates of birth**: the member lists and the ledger are then put in order, eldest first, automatically.
+* **Board** (menu: Board). Everyone can post to the family board. Members can also write **privately to the admin**. You will get a **text message** when someone does (to the phone number in Setup, and to any member you marked as an admin), and the **Messages** tab in the admin area shows the conversation and lets you reply. You can remove any post on the board (a "Remove" link appears on each).
+
 ## What is not built yet
 
-* The **family tree** and the **message board** (planned next).
 * **Automatic M-PESA intake** (Daraja): payments still arrive by importing a statement. This is planned last and needs approval from Safaricom, which can take days or weeks.

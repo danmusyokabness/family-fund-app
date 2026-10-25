@@ -133,3 +133,64 @@ test("needsToConnect is true until a live node is linked to the member; deleted 
   assert.equal(needsToConnect([node({ id: "1", name: "X", memberId: "m1" })], "m1"), false);
   assert.equal(needsToConnect([node({ id: "1", name: "X", memberId: "m1", deletedAt: "2026-10-01T00:00:00.000Z" })], "m1"), true);
 });
+
+import { nodeFromRow, rowFromPatch, snapshot, toPublicNode, planUndo, type TreeRow } from "../lib/family-tree.ts";
+
+const ROW: TreeRow = {
+  id: "n1", name: "Jane Doe", spouse_name: "John Doe", parent_id: "p1", spouse_id: null, member_id: "m1", date_of_birth: "1961-03-27",
+  birthdate: null, work_education: "Teacher", bio: "Hello", phone: "254700000001", deleted_at: null, created_at: "2026-01-01T00:00:00.000Z",
+};
+
+test("a database row becomes a node, and an edit becomes database columns", () => {
+  const node = nodeFromRow(ROW);
+  assert.equal(node.spouseName, "John Doe");
+  assert.equal(node.dateOfBirth, "1961-03-27");
+  assert.equal(node.memberId, "m1");
+  assert.deepEqual(rowFromPatch({ spouseName: "Jo", workEducation: null, nonsense: "x" } as never), { spouse_name: "Jo", work_education: null });
+});
+
+test("phone numbers are shown to the admin only", () => {
+  const node = nodeFromRow(ROW);
+  assert.equal(toPublicNode(node, true).phone, "254700000001");
+  assert.equal(toPublicNode(node, false).phone, null);
+  assert.ok(!("deletedAt" in toPublicNode(node, false)));
+});
+
+test("undo of an edit puts back only the fields that edit changed, never later changes to other fields", () => {
+  const before = { ...snapshot(nodeFromRow(ROW)) };
+  const after = { ...before, bio: "Changed bio", workEducation: "Principal" };
+  const current = { ...nodeFromRow(ROW), bio: "Changed bio", workEducation: "Principal", spouseName: "Edited later by someone else" };
+  const plan = planUndo({ action: "update", before, after, undoneAt: null }, current, "2026-10-23T00:00:00.000Z");
+  assert.equal(plan.ok, true);
+  if (plan.ok) {
+    assert.deepEqual(plan.update, { bio: "Hello", work_education: "Teacher" });
+    assert.ok(!("spouse_name" in plan.update)); // the later edit survives
+  }
+});
+
+test("undo of a removal brings the person back; undo of an addition removes them again", () => {
+  const removed = { ...nodeFromRow(ROW), memberId: null, deletedAt: "2026-10-01T00:00:00.000Z" };
+  const back = planUndo({ action: "delete", before: snapshot(removed), after: null, undoneAt: null }, removed, "now");
+  assert.deepEqual(back.ok && back.update, { deleted_at: null });
+
+  const live = { ...nodeFromRow(ROW), memberId: null };
+  const gone = planUndo({ action: "create", before: null, after: snapshot(live), undoneAt: null }, live, "2026-10-23T00:00:00.000Z");
+  assert.deepEqual(gone.ok && gone.update, { deleted_at: "2026-10-23T00:00:00.000Z" });
+});
+
+test("undo refuses what would leave a member floating or what was already done", () => {
+  const memberNode = nodeFromRow(ROW); // linked to a member
+  assert.equal(planUndo({ action: "create", before: null, after: snapshot(memberNode), undoneAt: null }, memberNode, "now").ok, false);
+  assert.equal(planUndo({ action: "update", before: {}, after: {}, undoneAt: "2026-10-01T00:00:00.000Z" }, memberNode, "now").ok, false);
+  assert.equal(planUndo({ action: "update", before: { bio: "a" }, after: { bio: "a" }, undoneAt: null }, memberNode, "now").ok, false); // nothing changed
+  assert.equal(planUndo({ action: "delete", before: null, after: null, undoneAt: null }, memberNode, "now").ok, false); // not removed
+  assert.equal(planUndo({ action: "update", before: { bio: "a" }, after: { bio: "b" }, undoneAt: null }, null, "now").ok, false); // gone
+  assert.equal(planUndo({ action: "restore", before: null, after: null, undoneAt: null }, memberNode, "now").ok, false);
+});
+
+test("undo of a claim unlinks the node, but only while it is still linked to that same member", () => {
+  const node = nodeFromRow(ROW);
+  const plan = planUndo({ action: "link", before: { memberId: null }, after: { memberId: "m1" }, undoneAt: null }, node, "now");
+  assert.deepEqual(plan.ok && plan.update, { member_id: null });
+  assert.equal(planUndo({ action: "link", before: { memberId: null }, after: { memberId: "someone-else" }, undoneAt: null }, node, "now").ok, false);
+});

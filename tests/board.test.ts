@@ -68,3 +68,31 @@ test("groupPrivateThreads makes one thread per member, newest activity first, wi
   assert.deepEqual(threads[1].messages.map((x) => x.id), ["1", "2", "4"]); // oldest first
   assert.equal(threads[1].unreadCount, 1); // "first" is unread; the admin's own reply and the read message do not count
 });
+
+import { boardRowFromDb, canRemoveMessage, type BoardDbRow } from "../lib/board.ts";
+
+const DB_ROW: BoardDbRow = {
+  id: "m1", member_id: "a", sender_name: "Ann", content: "Hello", is_private: false, is_from_admin: null,
+  created_at: "2026-10-01T10:00:00.000Z", read_at: null, deleted_at: null,
+};
+
+test("a database row becomes a board message; a missing admin flag means 'not from the admin'", () => {
+  const row = boardRowFromDb(DB_ROW);
+  assert.equal(row.isFromAdmin, false);
+  assert.equal(row.senderName, "Ann");
+  assert.equal(boardRowFromDb({ ...DB_ROW, is_from_admin: true }).isFromAdmin, true);
+});
+
+test("who may remove a message: an admin any; an author only their own PUBLIC post; nobody a message already removed", () => {
+  const publicPost = boardRowFromDb(DB_ROW);
+  assert.equal(canRemoveMessage(publicPost, { memberId: "a", isAdmin: false }), true); // own post
+  assert.equal(canRemoveMessage(publicPost, { memberId: "b", isAdmin: false }), false); // someone else's
+  assert.equal(canRemoveMessage(publicPost, { memberId: null, isAdmin: true }), true); // admin
+  const privateMsg = boardRowFromDb({ ...DB_ROW, is_private: true });
+  assert.equal(canRemoveMessage(privateMsg, { memberId: "a", isAdmin: false }), false); // private: admin only
+  assert.equal(canRemoveMessage(privateMsg, { memberId: null, isAdmin: true }), true);
+  const gone = boardRowFromDb({ ...DB_ROW, deleted_at: "2026-10-02T00:00:00.000Z" });
+  assert.equal(canRemoveMessage(gone, { memberId: null, isAdmin: true }), false);
+  const adminReply = boardRowFromDb({ ...DB_ROW, is_from_admin: true, member_id: "a" });
+  assert.equal(canRemoveMessage(adminReply, { memberId: "a", isAdmin: false }), false); // a member cannot delete the admin's words
+});

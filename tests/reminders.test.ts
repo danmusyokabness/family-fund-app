@@ -290,6 +290,7 @@ const HEALTHY: HealthInput = {
   lastBackupAt: hoursBefore(24 * 3),
   alertPhoneCount: 1,
   statementCheck: { closingBalance: 16048.41, asOfDate: "2026-10-02", ledgerBalance: 16048.41 },
+  unreadMessages: 0,
 };
 const statusOfCheck = (input: HealthInput, key: string) => buildHealthChecks(input).find((c) => c.key === key)?.status;
 
@@ -367,6 +368,21 @@ test("a booster does not pay off monthly dues in the reminders either: the membe
   assert.equal(statusOfPlan(paidPlan, "owes"), "no_balance_due");
 });
 const statusOfPlan = (plan: { messages: { memberId: string; status: string }[] }, id: string) => plan.messages.find((m) => m.memberId === id)?.status;
+
+test("health: unread private messages from members make the Messages line amber", () => {
+  assert.equal(statusOfCheck(HEALTHY, "messages"), "ok");
+  const waiting = buildHealthChecks({ ...HEALTHY, unreadMessages: 3 }).find((c) => c.key === "messages");
+  assert.equal(waiting?.status, "warn");
+  assert.ok(waiting?.detail.includes("3 private message(s)"));
+});
+
+test("a private message to the admin texts the admin (a dry run while live sending is off) and never throws", async () => {
+  const { notifyAdminsOfPrivateMessage } = await import("../lib/messaging.ts");
+  const tables = { ...ADMIN_TABLES(), settings: [{ key: "fund_name", value: "Test Fund" }] };
+  const result = await notifyAdminsOfPrivateMessage(fakeDb(tables, []), "Ann One");
+  assert.deepEqual(result, { recipients: 1 }); // the one active member-admin
+  assert.equal(await notifyAdminsOfPrivateMessage(fakeDb({ members: [], settings: [] }, []), "Ann One"), null); // nobody to tell
+});
 
 test("health: the overall status is the worst single check", () => {
   assert.equal(overallStatus([{ key: "a", label: "a", status: "ok", detail: "" }, { key: "b", label: "b", status: "warn", detail: "" }]), "warn");

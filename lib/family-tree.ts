@@ -292,3 +292,134 @@ export function rankParentCandidates(nodes: TreeNode[], memberName: string): Tre
 export function needsToConnect(nodes: TreeNode[], memberId: string): boolean {
   return !nodes.some((n) => !n.deletedAt && n.memberId === memberId);
 }
+
+// ---------------------------------------------------------------------
+// Database rows <-> nodes, what each viewer may see, and undo.
+// ---------------------------------------------------------------------
+export interface TreeRow {
+  id: string;
+  name: string;
+  spouse_name: string | null;
+  parent_id: string | null;
+  spouse_id: string | null;
+  member_id: string | null;
+  date_of_birth: string | null;
+  birthdate: string | null;
+  work_education: string | null;
+  bio: string | null;
+  phone: string | null;
+  deleted_at: string | null;
+  created_at: string;
+}
+
+export function nodeFromRow(r: TreeRow): TreeNode {
+  return {
+    id: r.id,
+    name: r.name,
+    spouseName: r.spouse_name,
+    parentId: r.parent_id,
+    spouseId: r.spouse_id,
+    memberId: r.member_id,
+    dateOfBirth: r.date_of_birth,
+    birthdate: r.birthdate,
+    workEducation: r.work_education,
+    bio: r.bio,
+    phone: r.phone,
+    deletedAt: r.deleted_at,
+    createdAt: r.created_at,
+  };
+}
+
+const COLUMN_OF: Record<string, string> = {
+  name: "name",
+  spouseName: "spouse_name",
+  parentId: "parent_id",
+  spouseId: "spouse_id",
+  memberId: "member_id",
+  dateOfBirth: "date_of_birth",
+  birthdate: "birthdate",
+  workEducation: "work_education",
+  bio: "bio",
+  phone: "phone",
+};
+
+/** An edit (camelCase) as database columns (snake_case). Unknown keys are dropped. */
+export function rowFromPatch(patch: Partial<Record<keyof TreeNode, unknown>>): Record<string, unknown> {
+  const row: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(patch)) {
+    const column = COLUMN_OF[key];
+    if (column) row[column] = value === undefined ? null : value;
+  }
+  return row;
+}
+
+/** What gets stored in the change log: the editable fields only. */
+export function snapshot(node: TreeNode): Partial<TreeNode> {
+  return {
+    name: node.name,
+    spouseName: node.spouseName,
+    parentId: node.parentId,
+    spouseId: node.spouseId,
+    memberId: node.memberId,
+    dateOfBirth: node.dateOfBirth,
+    birthdate: node.birthdate,
+    workEducation: node.workEducation,
+    bio: node.bio,
+    phone: node.phone,
+  };
+}
+
+/** A node as shown to a viewer: phone numbers are for the admin only (decision D7). */
+export type PublicTreeNode = Omit<TreeNode, "deletedAt">;
+export function toPublicNode(node: TreeNode, isAdmin: boolean): PublicTreeNode {
+  const { deletedAt: _deletedAt, ...rest } = node;
+  void _deletedAt;
+  return { ...rest, phone: isAdmin ? node.phone : null };
+}
+
+export interface HistoryForUndo {
+  action: string; // create | update | delete | restore | link
+  before: Partial<TreeNode> | null;
+  after: Partial<TreeNode> | null;
+  undoneAt: string | null;
+}
+
+export type UndoPlan = { ok: true; update: Record<string, unknown>; summary: string } | { ok: false; reason: string };
+
+/**
+ * What undoing one logged change would do. Only the fields THAT change
+ * touched are put back, so later edits to other fields are never lost.
+ */
+export function planUndo(history: HistoryForUndo, current: TreeNode | null, nowIso: string): UndoPlan {
+  if (history.undoneAt) return { ok: false, reason: "That change has already been undone." };
+  if (!current) return { ok: false, reason: "That person is no longer in the tree." };
+
+  switch (history.action) {
+    case "create":
+      if (current.deletedAt) return { ok: false, reason: "That person has already been removed." };
+      if (current.memberId) return { ok: false, reason: "This is a member's own place in the tree. Edit it instead of undoing its creation." };
+      return { ok: true, update: { deleted_at: nowIso }, summary: `Removed ${current.name} again` };
+
+    case "update": {
+      if (current.deletedAt) return { ok: false, reason: "That person has been removed. Bring them back first." };
+      const fields = changedFields(history.before ?? {}, history.after ?? {});
+      if (fields.length === 0) return { ok: false, reason: "Nothing to undo: that change did not alter anything." };
+      const put: Partial<Record<keyof TreeNode, unknown>> = {};
+      for (const field of fields) put[field] = history.before?.[field] ?? null;
+      return { ok: true, update: rowFromPatch(put), summary: `Put back ${fields.length} earlier detail(s) for ${current.name}` };
+    }
+
+    case "delete":
+      if (!current.deletedAt) return { ok: false, reason: "That person is not removed." };
+      return { ok: true, update: { deleted_at: null }, summary: `Brought ${current.name} back` };
+
+    case "link":
+      if (!history.after?.memberId || current.memberId !== history.after.memberId) {
+        return { ok: false, reason: "That link has already changed." };
+      }
+      return { ok: true, update: { member_id: null }, summary: `Unlinked ${current.name} from the member account` };
+
+    default:
+      return { ok: false, reason: "That kind of change cannot be undone." };
+  }
+}
