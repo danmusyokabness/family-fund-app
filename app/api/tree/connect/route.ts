@@ -17,8 +17,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getMemberSession } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { nairobiTodayDateString } from "@/lib/dates";
-import { needsToConnect, rowFromPatch, sanitizeNodePatch, nodeFromRow, type TreeRow } from "@/lib/family-tree";
-import { loadLiveNodes, recordHistory } from "@/lib/tree-data";
+import { needsToConnect, rowFromPatch, sanitizeNodePatch } from "@/lib/family-tree";
+import { loadLiveNodes } from "@/lib/tree-data";
 
 export async function POST(req: NextRequest) {
   const member = await getMemberSession();
@@ -36,8 +36,6 @@ export async function POST(req: NextRequest) {
   if (!needsToConnect(nodes, member.memberId)) {
     return NextResponse.json({ error: "You already have a place in the tree." }, { status: 409 });
   }
-  const actor = { memberId: member.memberId, name: member.fullName, isAdmin: false };
-
   // ---- Take over an existing entry ------------------------------------------
   if (typeof body.claimNodeId === "string") {
     const target = nodes.find((n) => n.id === body.claimNodeId);
@@ -50,11 +48,9 @@ export async function POST(req: NextRequest) {
       .eq("id", target.id)
       .is("member_id", null)
       .is("deleted_at", null)
-      .select("*")
-      .single<TreeRow>();
+      .select("id")
+      .single<{ id: string }>();
     if (error || !data) return NextResponse.json({ error: "Could not connect you to that entry." }, { status: 409 });
-
-    await recordHistory(db, { nodeId: target.id, actor, action: "link", before: target, after: nodeFromRow(data) });
     return NextResponse.json({ ok: true, id: target.id });
   }
 
@@ -81,11 +77,8 @@ export async function POST(req: NextRequest) {
       member_id: member.memberId,
       created_by_member_id: member.memberId,
     })
-    .select("*")
-    .single<TreeRow>();
+    .select("id")
+    .single<{ id: string }>();
   if (error || !data) return NextResponse.json({ error: "Could not add you to the tree." }, { status: 500 });
-
-  const created = nodeFromRow(data);
-  await recordHistory(db, { nodeId: created.id, actor, action: "create", before: null, after: created });
-  return NextResponse.json({ ok: true, id: created.id });
+  return NextResponse.json({ ok: true, id: data.id });
 }

@@ -6,7 +6,7 @@
 
 import LogoutButton from "@/components/LogoutButton";
 
-type Page = "dashboard" | "ledger" | "tree" | "board";
+type Page = "dashboard" | "ledger" | "tree";
 
 export default function AppNav({ isAdmin, isMember, current }: { isAdmin: boolean; isMember: boolean; current: Page }) {
   const link = (href: string, label: string, page: Page) => (
@@ -18,7 +18,6 @@ export default function AppNav({ isAdmin, isMember, current }: { isAdmin: boolea
     <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1 text-sm">
       {link("/", "Dashboard", "dashboard")}
       {link("/tree", "Family tree", "tree")}
-      {link("/board", "Board", "board")}
       {isAdmin && (
         <a href="/admin" className="link">
           Admin

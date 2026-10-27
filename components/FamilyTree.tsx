@@ -1,10 +1,16 @@
 "use client";
 // components/FamilyTree.tsx
 //
-// The family tree. Everyone who is logged in can look, add people and edit
-// them; every change is logged, and an admin can undo any of them. A member
-// who has no place in the tree yet must first say where they are (decision
-// D20), so nobody is ever left floating.
+// The family tree, drawn as a real tree: small cards with a photo and a
+// name, joined by lines from parent to child, brothers and sisters side by
+// side on one line with their own children below them. Click a card to see
+// the details.
+//
+// Who may change what: a member may edit their own entry, their parent's and
+// their children's; an admin may edit everyone. Each person (or whoever
+// fills in their details) chooses which details the rest of the family can
+// see. A member who has no place in the tree yet must first say where they
+// are (decision D20).
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -21,30 +27,11 @@ interface TreeData {
   nodes: PublicTreeNode[];
   me: { memberId: string | null; name: string; nodeId: string | null };
   isAdmin: boolean;
+  editableIds: string[];
+  addChildIds: string[];
+  canAddParent: boolean;
   needsToConnect: boolean;
 }
-interface Change {
-  id: string;
-  at: string;
-  by: string;
-  action: string;
-  person: string;
-  fields: string[];
-  undone: boolean;
-}
-
-const FIELD_LABEL: Record<string, string> = {
-  name: "name",
-  spouseName: "spouse",
-  parentId: "parent",
-  spouseId: "spouse link",
-  memberId: "member link",
-  dateOfBirth: "date of birth",
-  birthdate: "birth date note",
-  workEducation: "work or education",
-  bio: "bio",
-  phone: "phone",
-};
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -59,8 +46,9 @@ function born(node: PublicTreeNode): string | null {
   return node.birthdate ? `Born ${node.birthdate}` : null;
 }
 
-function when(iso: string): string {
-  return new Date(iso).toLocaleString("en-GB", { timeZone: "Africa/Nairobi", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
 }
 
 /** The nodes as the pure tree functions expect them. */
@@ -68,57 +56,93 @@ function asTreeNodes(nodes: PublicTreeNode[]): TreeNode[] {
   return nodes.map((n) => ({ ...n, deletedAt: null }));
 }
 
-function describe(change: Change): string {
-  switch (change.action) {
-    case "create":
-      return `added ${change.person}`;
-    case "update":
-      return `changed ${change.person}${change.fields.length > 0 ? " (" + change.fields.map((f) => FIELD_LABEL[f] ?? f).join(", ") + ")" : ""}`;
-    case "delete":
-      return `removed ${change.person}`;
-    case "restore":
-      return `undid a change to ${change.person}`;
-    case "link":
-      return `linked ${change.person} to a member account`;
-    default:
-      return `changed ${change.person}`;
+/** Shrinks a chosen picture to a small square JPEG in the browser, so only a few kilobytes are stored. */
+async function shrinkPhoto(file: File): Promise<string> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error("That picture could not be opened."));
+      el.src = url;
+    });
+    const size = 200;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Your browser cannot prepare pictures.");
+    const side = Math.min(img.width, img.height);
+    ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size);
+    return canvas.toDataURL("image/jpeg", 0.82);
+  } finally {
+    URL.revokeObjectURL(url);
   }
 }
 
-// ---------------------------------------------------------------------------
-// The form for adding or editing one person
-// ---------------------------------------------------------------------------
-type Editing = { mode: "add"; parentId: string | null } | { mode: "edit"; node: PublicTreeNode };
+function Photo({ node, size = 46 }: { node: PublicTreeNode; size?: number }) {
+  const style = { width: size, height: size, fontSize: Math.round(size / 3) };
+  if (node.hasPhoto) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img className="fphoto" style={style} src={`/api/tree/${node.id}/photo?v=${encodeURIComponent(node.updatedAt)}`} alt="" />;
+  }
+  return (
+    <span className="fphoto" style={style} aria-hidden>
+      {initials(node.name)}
+    </span>
+  );
+}
 
-function PersonForm({
-  editing,
-  data,
-  onDone,
-  onCancel,
-}: {
-  editing: Editing;
-  data: TreeData;
-  onDone: () => void;
-  onCancel: () => void;
-}) {
+// ---------------------------------------------------------------------------
+// Add / edit form
+// ---------------------------------------------------------------------------
+type Editing =
+  | { mode: "add"; parentId: string; label: string }
+  | { mode: "addParent" }
+  | { mode: "edit"; node: PublicTreeNode };
+
+function PersonForm({ editing, data, onDone, onCancel }: { editing: Editing; data: TreeData; onDone: () => void; onCancel: () => void }) {
   const existing = editing.mode === "edit" ? editing.node : null;
   const [name, setName] = useState(existing?.name ?? "");
   const [spouseName, setSpouseName] = useState(existing?.spouseName ?? "");
+  const [spouseDetails, setSpouseDetails] = useState(existing?.spouseDetails ?? "");
   const [dateOfBirth, setDateOfBirth] = useState(existing?.dateOfBirth ?? "");
   const [birthdate, setBirthdate] = useState(existing?.birthdate ?? "");
   const [workEducation, setWorkEducation] = useState(existing?.workEducation ?? "");
   const [bio, setBio] = useState(existing?.bio ?? "");
   const [phone, setPhone] = useState(existing?.phone ?? "");
-  const [parentId, setParentId] = useState(editing.mode === "add" ? editing.parentId ?? "" : existing?.parentId ?? "");
+  const [hidden, setHidden] = useState<Set<string>>(new Set(existing?.hiddenFields ?? []));
+  const [parentId, setParentId] = useState(existing?.parentId ?? "");
+  const [photo, setPhoto] = useState<string | null>(null); // a newly chosen photo, ready to upload
+  const [removePhoto, setRemovePhoto] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // A person cannot be moved under themselves or their own descendants.
   const parentOptions = useMemo(() => {
     const all = asTreeNodes(data.nodes);
     const blocked = new Set(existing ? [existing.id, ...descendantIds(all, existing.id)] : []);
     return data.nodes.filter((n) => !blocked.has(n.id)).sort((a, b) => a.name.localeCompare(b.name));
   }, [data.nodes, existing]);
+
+  function toggleVisible(key: string) {
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  async function choosePhoto(file: File | undefined) {
+    if (!file) return;
+    setError(null);
+    try {
+      setPhoto(await shrinkPhoto(file));
+      setRemovePhoto(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "That picture could not be used.");
+    }
+  }
 
   async function submit() {
     setBusy(true);
@@ -126,21 +150,44 @@ function PersonForm({
     const body: Record<string, unknown> = {
       name,
       spouseName,
+      spouseDetails,
       dateOfBirth,
       birthdate,
       workEducation,
       bio,
-      parentId: parentId || null,
+      phone,
+      hiddenFields: [...hidden],
     };
-    if (data.isAdmin) body.phone = phone;
     try {
-      const res = await fetch(existing ? `/api/tree/${existing.id}` : "/api/tree", {
-        method: existing ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error ?? "Could not save.");
+      let personId: string;
+      if (editing.mode === "edit") {
+        if (data.isAdmin) body.parentId = parentId || null;
+        const res = await fetch(`/api/tree/${editing.node.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error ?? "Could not save.");
+        personId = editing.node.id;
+      } else if (editing.mode === "addParent") {
+        const res = await fetch("/api/tree/parent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error ?? "Could not save.");
+        personId = result.id;
+      } else {
+        body.parentId = editing.parentId;
+        const res = await fetch("/api/tree", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error ?? "Could not save.");
+        personId = result.id;
+      }
+
+      if (photo) {
+        const res = await fetch(`/api/tree/${personId}/photo`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dataUrl: photo }) });
+        if (!res.ok) {
+          const result = await res.json().catch(() => ({}));
+          throw new Error(`Saved, but the photo could not be: ${result.error ?? "try a smaller picture."}`);
+        }
+      } else if (removePhoto && existing?.hasPhoto) {
+        await fetch(`/api/tree/${personId}/photo`, { method: "DELETE" });
+      }
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save.");
@@ -150,53 +197,146 @@ function PersonForm({
   }
 
   const input = "w-full rounded-md border border-line px-3 py-2 text-sm";
+  const title =
+    editing.mode === "edit" ? `Edit ${existing?.name}` : editing.mode === "addParent" ? "Add your parent" : editing.label;
+  const shownPhoto = photo ?? (removePhoto ? null : existing?.hasPhoto ? `/api/tree/${existing.id}/photo?v=${encodeURIComponent(existing.updatedAt)}` : null);
+  const visibleBox = (key: string) => (
+    <label className="mt-1 flex items-center gap-1.5 text-xs text-ink-soft">
+      <input type="checkbox" checked={!hidden.has(key)} onChange={() => toggleVisible(key)} />
+      Show to the family
+    </label>
+  );
+
   return (
-    <div className="paper-card space-y-3 border-brass p-4">
-      <h3 className="font-medium">{existing ? `Edit ${existing.name}` : "Add a person"}</h3>
+    <div className="space-y-3">
+      <h3 className="font-serif text-lg font-semibold">{title}</h3>
+
+      <div className="flex items-center gap-3">
+        {shownPhoto ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img className="fphoto" style={{ width: 64, height: 64 }} src={shownPhoto} alt="" />
+        ) : (
+          <span className="fphoto" style={{ width: 64, height: 64, fontSize: 20 }}>
+            {initials(name || "?")}
+          </span>
+        )}
+        <div className="space-y-1 text-xs text-ink-soft">
+          <label className="link cursor-pointer">
+            {shownPhoto ? "Change photo" : "Add a photo"}
+            <input type="file" accept="image/*" className="hidden" onChange={(e) => choosePhoto(e.target.files?.[0])} />
+          </label>
+          {shownPhoto && (
+            <button
+              type="button"
+              className="block underline"
+              onClick={() => {
+                setPhoto(null);
+                setRemovePhoto(true);
+              }}
+            >
+              Remove photo
+            </button>
+          )}
+        </div>
+      </div>
+
+      <label className="block text-xs text-ink-soft">
+        Full name
+        <input value={name} onChange={(e) => setName(e.target.value)} className={input} />
+      </label>
+
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className="text-xs text-ink-soft sm:col-span-2">
-          Full name
-          <input value={name} onChange={(e) => setName(e.target.value)} className={input} />
+        <div>
+          <label className="block text-xs text-ink-soft">
+            Date of birth
+            <input type="date" value={dateOfBirth} onChange={(e) => setDateOfBirth(e.target.value)} className={input} />
+          </label>
+          {visibleBox("dateOfBirth")}
+        </div>
+        <label className="block text-xs text-ink-soft">
+          Or an approximate date
+          <input value={birthdate} onChange={(e) => setBirthdate(e.target.value)} placeholder="for example: around 1950" className={input} />
         </label>
-        <label className="text-xs text-ink-soft sm:col-span-2">
-          Child of
+      </div>
+
+      <div>
+        <label className="block text-xs text-ink-soft">
+          Work or education
+          <input value={workEducation} onChange={(e) => setWorkEducation(e.target.value)} className={input} />
+        </label>
+        {visibleBox("workEducation")}
+      </div>
+
+      <div>
+        <label className="block text-xs text-ink-soft">
+          About
+          <textarea value={bio} onChange={(e) => setBio(e.target.value)} rows={3} className={input} />
+        </label>
+        {visibleBox("bio")}
+      </div>
+
+      <div>
+        <label className="block text-xs text-ink-soft">
+          Phone
+          <input value={phone} onChange={(e) => setPhone(e.target.value)} className={input} />
+        </label>
+        {visibleBox("phone")}
+      </div>
+
+      <details className="rounded-md border border-line px-3 py-2 text-xs text-ink-soft">
+        <summary className="cursor-pointer">Spouse (optional)</summary>
+        <div className="mt-2 space-y-2">
+          <label className="block">
+            Spouse&apos;s name
+            <input value={spouseName} onChange={(e) => setSpouseName(e.target.value)} className={input} />
+          </label>
+          <label className="block">
+            More about the spouse
+            <textarea value={spouseDetails} onChange={(e) => setSpouseDetails(e.target.value)} rows={2} className={input} />
+          </label>
+          <label className="flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              checked={!hidden.has("spouseName") && !hidden.has("spouseDetails")}
+              onChange={() =>
+                setHidden((prev) => {
+                  const next = new Set(prev);
+                  const show = next.has("spouseName") || next.has("spouseDetails");
+                  if (show) {
+                    next.delete("spouseName");
+                    next.delete("spouseDetails");
+                  } else {
+                    next.add("spouseName");
+                    next.add("spouseDetails");
+                  }
+                  return next;
+                })
+              }
+            />
+            Show the spouse to the family
+          </label>
+        </div>
+      </details>
+
+      {data.isAdmin && editing.mode === "edit" && (
+        <label className="block text-xs text-ink-soft">
+          Child of (admin only: moves this person)
           <select value={parentId} onChange={(e) => setParentId(e.target.value)} className={input}>
             <option value="">(nobody: top of the tree)</option>
             {parentOptions.map((n) => (
               <option key={n.id} value={n.id}>
                 {n.name}
-                {n.spouseName ? ` & ${n.spouseName}` : ""}
               </option>
             ))}
           </select>
         </label>
-        <label className="text-xs text-ink-soft">
-          Date of birth
-          <input type="date" value={dateOfBirth} onChange={(e) => setDateOfBirth(e.target.value)} className={input} />
-        </label>
-        <label className="text-xs text-ink-soft">
-          Birth date, if only approximate
-          <input value={birthdate} onChange={(e) => setBirthdate(e.target.value)} placeholder="for example: around 1950" className={input} />
-        </label>
-        <label className="text-xs text-ink-soft sm:col-span-2">
-          Spouse (name)
-          <input value={spouseName} onChange={(e) => setSpouseName(e.target.value)} className={input} />
-        </label>
-        <label className="text-xs text-ink-soft sm:col-span-2">
-          Work or education
-          <input value={workEducation} onChange={(e) => setWorkEducation(e.target.value)} className={input} />
-        </label>
-        <label className="text-xs text-ink-soft sm:col-span-2">
-          About
-          <textarea value={bio} onChange={(e) => setBio(e.target.value)} rows={3} className={input} />
-        </label>
-        {data.isAdmin && (
-          <label className="text-xs text-ink-soft sm:col-span-2">
-            Phone (only admins can see this)
-            <input value={phone} onChange={(e) => setPhone(e.target.value)} className={input} />
-          </label>
-        )}
-      </div>
+      )}
+
+      <p className="text-xs text-ink-soft">
+        Name and photo are always shown. The other details are shown to the family unless you untick &quot;Show to the family&quot;. A hidden detail can still be seen by the
+        person, their parent, their children and the admin.
+      </p>
+
       {error && <p className="text-sm text-danger">{error}</p>}
       <div className="flex gap-3">
         <button type="button" onClick={submit} disabled={busy || !name.trim()} className="btn-primary px-4 py-1.5 text-sm">
@@ -242,8 +382,7 @@ function ConnectToTree({ data, onDone }: { data: TreeData; onDone: () => void })
       <div>
         <h1 className="font-serif text-2xl font-semibold">Where are you in the family?</h1>
         <p className="mt-1 text-sm text-ink-soft">
-          Before you look around, please find your place in the family tree, so everyone is connected. This only takes a moment, and you can change your
-          details afterwards.
+          Before you look around, please find your place in the family tree, so everyone is connected. This only takes a moment, and you can change your details afterwards.
         </p>
       </div>
 
@@ -254,9 +393,10 @@ function ConnectToTree({ data, onDone }: { data: TreeData; onDone: () => void })
           <h2 className="font-medium">Is one of these you?</h2>
           {claims.map((n) => (
             <div key={n.id} className="flex items-center justify-between gap-3 text-sm">
-              <span>
+              <span className="flex items-center gap-2">
+                <Photo node={n} size={32} />
                 {n.name}
-                {born(n) && <span className="ml-2 text-xs text-ink-soft">{born(n)}</span>}
+                {born(n) && <span className="text-xs text-ink-soft">{born(n)}</span>}
               </span>
               <button type="button" disabled={busy} onClick={() => connect({ claimNodeId: n.id })} className="btn-secondary px-3 py-1 text-xs">
                 That&apos;s me
@@ -283,7 +423,6 @@ function ConnectToTree({ data, onDone }: { data: TreeData; onDone: () => void })
               {parents.map((n) => (
                 <option key={n.id} value={n.id}>
                   {n.name}
-                  {n.spouseName ? ` & ${n.spouseName}` : ""}
                 </option>
               ))}
             </select>
@@ -309,17 +448,13 @@ function Branch({
   data,
   collapsed,
   toggle,
-  onAdd,
-  onEdit,
-  onRemove,
+  select,
 }: {
   branch: TreeBranch;
   data: TreeData;
   collapsed: Set<string>;
   toggle: (id: string) => void;
-  onAdd: (parentId: string) => void;
-  onEdit: (node: PublicTreeNode) => void;
-  onRemove: (node: PublicTreeNode) => void;
+  select: (node: PublicTreeNode) => void;
 }) {
   const node = branch.node as unknown as PublicTreeNode;
   const isMe = data.me.nodeId === node.id;
@@ -328,42 +463,22 @@ function Branch({
 
   return (
     <li>
-      <div className={`paper-card p-3 text-sm ${isMe ? "border-brass" : ""}`}>
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <p className="font-medium">
-            {node.name}
-            {isMe && <span className="ml-2 rounded-full border border-brass px-2 py-0.5 text-xs font-normal text-brass">you</span>}
-            {node.memberId && !isMe && <span className="ml-2 text-xs font-normal text-ink-soft">member</span>}
-          </p>
-          {hasKids && (
-            <button type="button" onClick={() => toggle(node.id)} className="text-xs text-ink-soft underline">
-              {closed ? `Show ${branch.children.length} child(ren)` : "Hide children"}
-            </button>
-          )}
-        </div>
-        {node.spouseName && <p className="text-xs text-ink-soft">Married to {node.spouseName}</p>}
-        {born(node) && <p className="text-xs text-ink-soft">{born(node)}</p>}
-        {node.workEducation && <p className="mt-1 text-xs">{node.workEducation}</p>}
-        {node.bio && <p className="mt-1 whitespace-pre-wrap text-xs text-ink-soft">{node.bio}</p>}
-        {data.isAdmin && node.phone && <p className="mt-1 text-xs text-ink-soft">Phone: {node.phone}</p>}
-        <div className="mt-2 flex gap-4 text-xs">
-          <button type="button" onClick={() => onAdd(node.id)} className="link">
-            Add a child
+      <div className="fwrap">
+        <button type="button" className={`fcard ${isMe ? "me" : ""}`} onClick={() => select(node)} title={node.name}>
+          <Photo node={node} />
+          <span className="fcard-name">{node.name}</span>
+          {node.spouseName && <span className="fcard-sub">&amp; {node.spouseName}</span>}
+        </button>
+        {hasKids && (
+          <button type="button" className="ftoggle" onClick={() => toggle(node.id)} aria-label={closed ? "Show children" : "Hide children"}>
+            {closed ? `+${branch.children.length}` : "−"}
           </button>
-          <button type="button" onClick={() => onEdit(node)} className="link">
-            Edit
-          </button>
-          {!node.memberId && !hasKids && (
-            <button type="button" onClick={() => onRemove(node)} className="text-ink-soft underline">
-              Remove
-            </button>
-          )}
-        </div>
+        )}
       </div>
       {hasKids && !closed && (
-        <ul className="ml-3 mt-2 space-y-2 border-l border-line pl-4">
+        <ul>
           {branch.children.map((child) => (
-            <Branch key={child.node.id} branch={child} data={data} collapsed={collapsed} toggle={toggle} onAdd={onAdd} onEdit={onEdit} onRemove={onRemove} />
+            <Branch key={child.node.id} branch={child} data={data} collapsed={collapsed} toggle={toggle} select={select} />
           ))}
         </ul>
       )}
@@ -373,24 +488,19 @@ function Branch({
 
 export default function FamilyTree() {
   const [data, setData] = useState<TreeData | null>(null);
-  const [changes, setChanges] = useState<Change[]>([]);
-  const [changesAdmin, setChangesAdmin] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<PublicTreeNode | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [treeRes, historyRes] = await Promise.all([fetch("/api/tree"), fetch("/api/tree/history")]);
-      const tree = await treeRes.json();
-      if (!treeRes.ok) throw new Error(tree.error ?? "Could not load the family tree.");
+      const res = await fetch("/api/tree");
+      const tree = await res.json();
+      if (!res.ok) throw new Error(tree.error ?? "Could not load the family tree.");
       setData(tree);
-      if (historyRes.ok) {
-        const history = await historyRes.json();
-        setChanges(history.changes);
-        setChangesAdmin(history.isAdmin);
-      }
+      // Keep an open card up to date after a change.
+      setSelected((current) => (current ? (tree.nodes as PublicTreeNode[]).find((n) => n.id === current.id) ?? null : null));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load the family tree.");
     }
@@ -418,18 +528,9 @@ export default function FamilyTree() {
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       setError(body.error ?? "Could not remove that person.");
+    } else {
+      setSelected(null);
     }
-    await load();
-  }
-
-  async function undo(change: Change) {
-    if (!window.confirm(`Undo this change: ${describe(change)}?`)) return;
-    setError(null);
-    setNotice(null);
-    const res = await fetch("/api/admin/tree/undo", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ historyId: change.id }) });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) setError(body.error ?? "Could not undo that change.");
-    else setNotice(body.summary ?? "Undone.");
     await load();
   }
 
@@ -439,74 +540,128 @@ export default function FamilyTree() {
     return <ConnectToTree data={data} onDone={load} />;
   }
 
+  const editable = new Set(data.editableIds);
+  const canAddChild = new Set(data.addChildIds);
+  const closeAll = () => {
+    setSelected(null);
+    setEditing(null);
+  };
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="font-serif text-2xl font-semibold">Family tree</h1>
-          <p className="mt-1 text-sm text-ink-soft">
-            Eldest first. Anyone can add people and fix details; every change is recorded and an admin can undo it. Nobody is ever deleted for good.
-          </p>
-        </div>
-        <button type="button" onClick={() => setEditing({ mode: "add", parentId: null })} className="btn-primary px-4 py-1.5 text-sm">
-          Add a person
-        </button>
+    <div className="space-y-4">
+      <div>
+        <h1 className="font-serif text-2xl font-semibold">Family tree</h1>
+        <p className="mt-1 text-sm text-ink-soft">
+          Eldest first. Tap a person to see more. You can edit your own entry, your parent&apos;s and your children&apos;s; everyone chooses what the family can see.
+        </p>
       </div>
 
       {error && <p className="text-sm text-danger">{error}</p>}
-      {notice && <p className="text-sm text-forest">{notice}</p>}
-
-      {editing && (
-        <PersonForm
-          key={editing.mode === "edit" ? editing.node.id : `add-${editing.parentId ?? "root"}`}
-          editing={editing}
-          data={data}
-          onCancel={() => setEditing(null)}
-          onDone={async () => {
-            setEditing(null);
-            await load();
-          }}
-        />
-      )}
 
       {forest.length === 0 ? (
-        <p className="paper-card p-4 text-sm text-ink-soft">The tree is empty. Add the first person.</p>
+        <p className="paper-card p-4 text-sm text-ink-soft">The tree is empty.</p>
       ) : (
-        <ul className="space-y-3">
-          {forest.map((branch) => (
-            <Branch
-              key={branch.node.id}
-              branch={branch}
-              data={data}
-              collapsed={collapsed}
-              toggle={toggle}
-              onAdd={(parentId) => setEditing({ mode: "add", parentId })}
-              onEdit={(node) => setEditing({ mode: "edit", node })}
-              onRemove={remove}
-            />
-          ))}
-        </ul>
+        <div className="paper-card overflow-x-auto">
+          <div className="ftree">
+            <ul>
+              {forest.map((branch) => (
+                <Branch key={branch.node.id} branch={branch} data={data} collapsed={collapsed} toggle={toggle} select={setSelected} />
+              ))}
+            </ul>
+          </div>
+        </div>
       )}
 
-      <section className="paper-card overflow-hidden">
-        <h2 className="border-b border-line px-4 py-2 text-sm font-medium text-ink-soft">Recent changes</h2>
-        {changes.length === 0 && <p className="p-4 text-sm text-ink-soft">Nothing has changed yet.</p>}
-        <div className="max-h-80 overflow-y-auto">
-          {changes.map((c, i) => (
-            <div key={c.id} className={`flex items-center justify-between gap-3 px-4 py-2 text-xs ${i > 0 ? "border-t border-line" : ""} ${c.undone ? "opacity-50" : ""}`}>
-              <span>
-                <span className="text-ink-soft">{when(c.at)}</span> &middot; {c.by} {describe(c)}
-                {c.undone && <span className="ml-2 text-ink-soft">(undone)</span>}
-              </span>
-              {changesAdmin && !c.undone && c.action !== "restore" && (
-                <button type="button" onClick={() => undo(c)} className="link shrink-0">
-                  Undo
-                </button>
-              )}
-            </div>
-          ))}
+      {data.isAdmin && (
+        <p className="text-xs text-ink-soft">As an admin you can edit everyone, move people to a different parent, and add anywhere.</p>
+      )}
+
+      {/* ---- Details / edit panel ---- */}
+      {(selected || editing) && (
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={closeAll}>
+          <div className="paper-card max-h-[90vh] w-full max-w-md overflow-y-auto rounded-b-none p-5 sm:rounded-b-xl" onClick={(e) => e.stopPropagation()}>
+            {editing ? (
+              <PersonForm
+                key={editing.mode === "edit" ? editing.node.id : editing.mode === "add" ? `add-${editing.parentId}` : "add-parent"}
+                editing={editing}
+                data={data}
+                onCancel={() => setEditing(null)}
+                onDone={async () => {
+                  setEditing(null);
+                  await load();
+                }}
+              />
+            ) : (
+              selected && (
+                <div className="space-y-3 text-sm">
+                  <div className="flex items-center gap-3">
+                    <Photo node={selected} size={72} />
+                    <div>
+                      <p className="font-serif text-xl font-semibold">{selected.name}</p>
+                      {data.me.nodeId === selected.id && <p className="text-xs text-brass">This is you</p>}
+                      {selected.memberId && data.me.nodeId !== selected.id && <p className="text-xs text-ink-soft">Member of the fund</p>}
+                    </div>
+                  </div>
+
+                  {born(selected) && <p>{born(selected)}</p>}
+                  {selected.workEducation && <p>{selected.workEducation}</p>}
+                  {selected.bio && <p className="whitespace-pre-wrap text-ink-soft">{selected.bio}</p>}
+                  {selected.phone && (
+                    <p>
+                      Phone: <a className="link" href={`tel:${selected.phone}`}>{selected.phone}</a>
+                    </p>
+                  )}
+                  {selected.spouseName && (
+                    <p className="text-xs text-ink-soft">
+                      Spouse: {selected.spouseName}
+                      {selected.spouseDetails && <span className="block whitespace-pre-wrap">{selected.spouseDetails}</span>}
+                    </p>
+                  )}
+                  {editable.has(selected.id) && selected.hiddenFields.length > 0 && (
+                    <p className="text-xs text-ink-soft">Hidden from the rest of the family: {selected.hiddenFields.join(", ")}.</p>
+                  )}
+
+                  <div className="flex flex-wrap gap-2 border-t border-line pt-3">
+                    {editable.has(selected.id) && (
+                      <button type="button" className="btn-secondary px-3 py-1 text-xs" onClick={() => setEditing({ mode: "edit", node: selected })}>
+                        Edit
+                      </button>
+                    )}
+                    {canAddChild.has(selected.id) && (
+                      <button
+                        type="button"
+                        className="btn-secondary px-3 py-1 text-xs"
+                        onClick={() =>
+                          setEditing({
+                            mode: "add",
+                            parentId: selected.id,
+                            label: data.me.nodeId === selected.id ? "Add your child" : data.isAdmin ? `Add a child of ${selected.name}` : "Add your brother or sister",
+                          })
+                        }
+                      >
+                        {data.me.nodeId === selected.id ? "Add your child" : data.isAdmin ? "Add a child" : "Add a brother or sister"}
+                      </button>
+                    )}
+                    {data.me.nodeId === selected.id && data.canAddParent && (
+                      <button type="button" className="btn-secondary px-3 py-1 text-xs" onClick={() => setEditing({ mode: "addParent" })}>
+                        Add your parent
+                      </button>
+                    )}
+                    {editable.has(selected.id) && !selected.memberId && !data.nodes.some((n) => n.parentId === selected.id) && (
+                      <button type="button" className="px-3 py-1 text-xs text-ink-soft underline" onClick={() => remove(selected)}>
+                        Remove
+                      </button>
+                    )}
+                    <button type="button" className="ml-auto px-3 py-1 text-xs text-ink-soft underline" onClick={closeAll}>
+                      Close
+                    </button>
+                  </div>
+                </div>
+              )
+            )}
+          </div>
         </div>
-      </section>
+      )}
     </div>
   );
 }

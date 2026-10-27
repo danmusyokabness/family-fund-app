@@ -1,31 +1,50 @@
 // lib/family-tree.ts
 //
-// Pure rules for the family tree (decisions D12, D20 and A3):
-//   * every logged-in member may add and edit nodes;
-//   * nothing is ever permanently deleted (soft delete, undo from history);
-//   * a tree can never contain a loop (nobody can be their own ancestor);
-//   * a member with no node of their own must connect to the tree.
+// Pure rules for the family tree (decisions D12, D19, D20, A3):
+//   * a member may edit their OWN entry, their PARENT's entry and their
+//     CHILDREN's entries; an admin may edit everyone;
+//   * each person (or whoever fills in their details) decides which
+//     optional details the rest of the family can see;
+//   * nothing is ever permanently deleted (soft delete);
+//   * a tree can never contain a loop (nobody is their own ancestor);
+//   * a member with no entry of their own must connect to the tree.
 //
 // No database and no web code here, so every rule can be tested with
-// plain data. The API routes (Batch 2) call these functions.
+// plain data. The API routes call these functions.
 
 import { normalizePhone } from "./phone.ts";
+
+/** Details a person can choose to hide from the rest of the family. Name and photo are always shown. */
+export const HIDEABLE_FIELDS = ["phone", "dateOfBirth", "birthdate", "workEducation", "bio", "spouseName", "spouseDetails"] as const;
+export type HideableField = (typeof HIDEABLE_FIELDS)[number];
 
 export interface TreeNode {
   id: string;
   name: string;
   spouseName: string | null;
+  /** Optional extra information about the spouse (kept low-key on purpose). */
+  spouseDetails: string | null;
   parentId: string | null;
   spouseId: string | null;
   memberId: string | null;
   /** "YYYY-MM-DD" or null. The sort key for "eldest first". */
   dateOfBirth: string | null;
-  birthdate: string | null; // old free-text field, kept for approximate dates
+  birthdate: string | null; // free text, for approximate dates
   workEducation: string | null;
   bio: string | null;
   phone: string | null;
+  /** The details this person has chosen NOT to show to the rest of the family. */
+  hiddenFields: string[];
+  hasPhoto: boolean;
   deletedAt: string | null;
   createdAt: string;
+  updatedAt: string;
+  /**
+   * Position among all the family in eldest-first order, worked out on the
+   * server from the REAL birth dates. It lets everyone see the same order
+   * without the birth dates themselves being shown.
+   */
+  rank?: number;
 }
 
 export interface TreeBranch {
@@ -38,11 +57,19 @@ export interface TreeBranch {
 // dates, then by when the node was created, then by name.
 // ---------------------------------------------------------------------
 export function compareSiblings(a: TreeNode, b: TreeNode): number {
+  if (a.rank !== undefined && b.rank !== undefined) return a.rank - b.rank;
   if (a.dateOfBirth && b.dateOfBirth && a.dateOfBirth !== b.dateOfBirth) return a.dateOfBirth < b.dateOfBirth ? -1 : 1;
   if (a.dateOfBirth && !b.dateOfBirth) return -1;
   if (!a.dateOfBirth && b.dateOfBirth) return 1;
   if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? -1 : 1;
   return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+}
+
+/** Gives every node its place in eldest-first order, from the real data. */
+export function withRanks<T extends TreeNode>(nodes: T[]): T[] {
+  const sorted = [...nodes].sort((a, b) => compareSiblings({ ...a, rank: undefined }, { ...b, rank: undefined }));
+  const rankOf = new Map(sorted.map((n, i) => [n.id, i]));
+  return nodes.map((n) => ({ ...n, rank: rankOf.get(n.id) }));
 }
 
 /**
@@ -130,11 +157,67 @@ export function wouldCreateCycle(nodes: TreeNode[], nodeId: string, newParentId:
 }
 
 // ---------------------------------------------------------------------
+// Who may change what
+// ---------------------------------------------------------------------
+
+/**
+ * The entries this viewer may edit: their own, their parent's and their
+ * children's. An admin may edit every entry. A viewer with no entry of
+ * their own (not yet connected) may edit nothing.
+ */
+export function editableNodeIds(nodes: TreeNode[], myNodeId: string | null, isAdmin: boolean): Set<string> {
+  const live = nodes.filter((n) => !n.deletedAt);
+  if (isAdmin) return new Set(live.map((n) => n.id));
+  const mine = myNodeId ? live.find((n) => n.id === myNodeId) : undefined;
+  if (!mine) return new Set();
+  const ids = new Set<string>([mine.id]);
+  if (mine.parentId && live.some((n) => n.id === mine.parentId)) ids.add(mine.parentId);
+  for (const n of live) if (n.parentId === mine.id) ids.add(n.id);
+  return ids;
+}
+
+/**
+ * The entries this viewer may add a CHILD under: themselves (their own
+ * child) and their parent (a brother or sister). An admin may add under
+ * anyone.
+ */
+export function addChildTargetIds(nodes: TreeNode[], myNodeId: string | null, isAdmin: boolean): Set<string> {
+  const live = nodes.filter((n) => !n.deletedAt);
+  if (isAdmin) return new Set(live.map((n) => n.id));
+  const mine = myNodeId ? live.find((n) => n.id === myNodeId) : undefined;
+  if (!mine) return new Set();
+  const ids = new Set<string>([mine.id]);
+  if (mine.parentId && live.some((n) => n.id === mine.parentId)) ids.add(mine.parentId);
+  return ids;
+}
+
+/** A node as shown to a viewer. */
+export type PublicTreeNode = Omit<TreeNode, "deletedAt">;
+
+/**
+ * What a viewer is shown. The details a person chose to hide are removed
+ * unless the viewer is allowed to edit that entry (the person, their
+ * parent, their children, or an admin), who need to see them to edit them.
+ * The list of hidden details is only sent to those same people.
+ */
+export function viewForViewer(node: TreeNode, canSeeHidden: boolean): PublicTreeNode {
+  const { deletedAt: _deletedAt, ...rest } = node;
+  void _deletedAt;
+  if (canSeeHidden) return { ...rest };
+  const view: PublicTreeNode = { ...rest, hiddenFields: [] };
+  for (const field of node.hiddenFields) {
+    if ((HIDEABLE_FIELDS as readonly string[]).includes(field)) (view as unknown as Record<string, unknown>)[field] = null;
+  }
+  return view;
+}
+
+// ---------------------------------------------------------------------
 // Editing: what a member is allowed to send, checked and cleaned.
 // ---------------------------------------------------------------------
 export interface NodePatch {
   name?: string;
   spouseName?: string | null;
+  spouseDetails?: string | null;
   parentId?: string | null;
   spouseId?: string | null;
   dateOfBirth?: string | null;
@@ -142,6 +225,7 @@ export interface NodePatch {
   workEducation?: string | null;
   bio?: string | null;
   phone?: string | null;
+  hiddenFields?: string[];
 }
 
 export type PatchResult = { ok: true; patch: NodePatch } | { ok: false; errors: string[] };
@@ -190,6 +274,7 @@ export function sanitizeNodePatch(input: Record<string, unknown>, today: string)
     else patch.name = v.trim();
   }
   textField("spouseName", MAX_NAME, "Spouse name");
+  textField("spouseDetails", MAX_TEXT, "Spouse details");
   textField("birthdate", 60, "Birth date note");
   textField("workEducation", MAX_TEXT, "Work / education");
   textField("bio", MAX_TEXT, "Bio");
@@ -210,6 +295,17 @@ export function sanitizeNodePatch(input: Record<string, unknown>, today: string)
     else patch.phone = normalizePhone(v);
   }
 
+  if (has("hiddenFields")) {
+    const v = input.hiddenFields;
+    if (!Array.isArray(v) || !v.every((f) => typeof f === "string")) {
+      errors.push("The list of hidden details is not valid.");
+    } else {
+      const unknown = v.filter((f) => !(HIDEABLE_FIELDS as readonly string[]).includes(f));
+      if (unknown.length > 0) errors.push(`"${unknown[0]}" is not something that can be hidden.`);
+      else patch.hiddenFields = [...new Set(v as string[])];
+    }
+  }
+
   for (const key of ["parentId", "spouseId"] as const) {
     if (!has(key)) continue;
     const v = input[key];
@@ -222,11 +318,12 @@ export function sanitizeNodePatch(input: Record<string, unknown>, today: string)
 }
 
 // ---------------------------------------------------------------------
-// History: which fields actually changed, for the change log and undo.
+// Which fields actually changed (so an edit that changes nothing is skipped).
 // ---------------------------------------------------------------------
 const TRACKED: (keyof TreeNode)[] = [
   "name",
   "spouseName",
+  "spouseDetails",
   "parentId",
   "spouseId",
   "memberId",
@@ -235,10 +332,20 @@ const TRACKED: (keyof TreeNode)[] = [
   "workEducation",
   "bio",
   "phone",
+  "hiddenFields",
 ];
 
+function same(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    const x = [...((a as string[] | null | undefined) ?? [])].sort().join("|");
+    const y = [...((b as string[] | null | undefined) ?? [])].sort().join("|");
+    return x === y;
+  }
+  return (a ?? null) === (b ?? null);
+}
+
 export function changedFields(before: Partial<TreeNode>, after: Partial<TreeNode>): (keyof TreeNode)[] {
-  return TRACKED.filter((key) => (before[key] ?? null) !== (after[key] ?? null));
+  return TRACKED.filter((key) => !same(before[key], after[key]));
 }
 
 // ---------------------------------------------------------------------
@@ -294,12 +401,13 @@ export function needsToConnect(nodes: TreeNode[], memberId: string): boolean {
 }
 
 // ---------------------------------------------------------------------
-// Database rows <-> nodes, what each viewer may see, and undo.
+// Database rows <-> nodes
 // ---------------------------------------------------------------------
 export interface TreeRow {
   id: string;
   name: string;
   spouse_name: string | null;
+  spouse_details: string | null;
   parent_id: string | null;
   spouse_id: string | null;
   member_id: string | null;
@@ -308,8 +416,11 @@ export interface TreeRow {
   work_education: string | null;
   bio: string | null;
   phone: string | null;
+  hidden_fields: string[] | null;
+  has_photo: boolean | null;
   deleted_at: string | null;
   created_at: string;
+  updated_at: string | null;
 }
 
 export function nodeFromRow(r: TreeRow): TreeNode {
@@ -317,6 +428,7 @@ export function nodeFromRow(r: TreeRow): TreeNode {
     id: r.id,
     name: r.name,
     spouseName: r.spouse_name,
+    spouseDetails: r.spouse_details,
     parentId: r.parent_id,
     spouseId: r.spouse_id,
     memberId: r.member_id,
@@ -325,14 +437,18 @@ export function nodeFromRow(r: TreeRow): TreeNode {
     workEducation: r.work_education,
     bio: r.bio,
     phone: r.phone,
+    hiddenFields: r.hidden_fields ?? [],
+    hasPhoto: r.has_photo === true,
     deletedAt: r.deleted_at,
     createdAt: r.created_at,
+    updatedAt: r.updated_at ?? r.created_at,
   };
 }
 
 const COLUMN_OF: Record<string, string> = {
   name: "name",
   spouseName: "spouse_name",
+  spouseDetails: "spouse_details",
   parentId: "parent_id",
   spouseId: "spouse_id",
   memberId: "member_id",
@@ -341,6 +457,7 @@ const COLUMN_OF: Record<string, string> = {
   workEducation: "work_education",
   bio: "bio",
   phone: "phone",
+  hiddenFields: "hidden_fields",
 };
 
 /** An edit (camelCase) as database columns (snake_case). Unknown keys are dropped. */
@@ -351,75 +468,4 @@ export function rowFromPatch(patch: Partial<Record<keyof TreeNode, unknown>>): R
     if (column) row[column] = value === undefined ? null : value;
   }
   return row;
-}
-
-/** What gets stored in the change log: the editable fields only. */
-export function snapshot(node: TreeNode): Partial<TreeNode> {
-  return {
-    name: node.name,
-    spouseName: node.spouseName,
-    parentId: node.parentId,
-    spouseId: node.spouseId,
-    memberId: node.memberId,
-    dateOfBirth: node.dateOfBirth,
-    birthdate: node.birthdate,
-    workEducation: node.workEducation,
-    bio: node.bio,
-    phone: node.phone,
-  };
-}
-
-/** A node as shown to a viewer: phone numbers are for the admin only (decision D7). */
-export type PublicTreeNode = Omit<TreeNode, "deletedAt">;
-export function toPublicNode(node: TreeNode, isAdmin: boolean): PublicTreeNode {
-  const { deletedAt: _deletedAt, ...rest } = node;
-  void _deletedAt;
-  return { ...rest, phone: isAdmin ? node.phone : null };
-}
-
-export interface HistoryForUndo {
-  action: string; // create | update | delete | restore | link
-  before: Partial<TreeNode> | null;
-  after: Partial<TreeNode> | null;
-  undoneAt: string | null;
-}
-
-export type UndoPlan = { ok: true; update: Record<string, unknown>; summary: string } | { ok: false; reason: string };
-
-/**
- * What undoing one logged change would do. Only the fields THAT change
- * touched are put back, so later edits to other fields are never lost.
- */
-export function planUndo(history: HistoryForUndo, current: TreeNode | null, nowIso: string): UndoPlan {
-  if (history.undoneAt) return { ok: false, reason: "That change has already been undone." };
-  if (!current) return { ok: false, reason: "That person is no longer in the tree." };
-
-  switch (history.action) {
-    case "create":
-      if (current.deletedAt) return { ok: false, reason: "That person has already been removed." };
-      if (current.memberId) return { ok: false, reason: "This is a member's own place in the tree. Edit it instead of undoing its creation." };
-      return { ok: true, update: { deleted_at: nowIso }, summary: `Removed ${current.name} again` };
-
-    case "update": {
-      if (current.deletedAt) return { ok: false, reason: "That person has been removed. Bring them back first." };
-      const fields = changedFields(history.before ?? {}, history.after ?? {});
-      if (fields.length === 0) return { ok: false, reason: "Nothing to undo: that change did not alter anything." };
-      const put: Partial<Record<keyof TreeNode, unknown>> = {};
-      for (const field of fields) put[field] = history.before?.[field] ?? null;
-      return { ok: true, update: rowFromPatch(put), summary: `Put back ${fields.length} earlier detail(s) for ${current.name}` };
-    }
-
-    case "delete":
-      if (!current.deletedAt) return { ok: false, reason: "That person is not removed." };
-      return { ok: true, update: { deleted_at: null }, summary: `Brought ${current.name} back` };
-
-    case "link":
-      if (!history.after?.memberId || current.memberId !== history.after.memberId) {
-        return { ok: false, reason: "That link has already changed." };
-      }
-      return { ok: true, update: { member_id: null }, summary: `Unlinked ${current.name} from the member account` };
-
-    default:
-      return { ok: false, reason: "That kind of change cannot be undone." };
-  }
 }

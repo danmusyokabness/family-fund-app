@@ -14,16 +14,15 @@ import PaymentsManager from "./PaymentsManager";
 import StatementImport from "./StatementImport";
 import Reminders from "./Reminders";
 import HealthPanel from "./HealthPanel";
-import BoardInbox from "./BoardInbox";
+import ChatWidget from "../ChatWidget";
 
-type Tab = "setup" | "members" | "payments" | "import" | "reminders" | "messages" | "health";
+type Tab = "setup" | "members" | "payments" | "import" | "reminders" | "health";
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "members", label: "Members" },
   { key: "payments", label: "Payments" },
   { key: "import", label: "Import" },
   { key: "reminders", label: "Reminders" },
-  { key: "messages", label: "Messages" },
   { key: "health", label: "Health" },
   { key: "setup", label: "Setup" },
 ];
@@ -52,10 +51,10 @@ export default function AdminShell() {
         {tab === "payments" && <PaymentsManager />}
         {tab === "import" && <StatementImport />}
         {tab === "reminders" && <Reminders />}
-        {tab === "messages" && <BoardInbox />}
         {tab === "health" && <HealthPanel />}
         {tab === "setup" && <SetupForm />}
       </div>
+      <ChatWidget />
     </div>
   );
 }

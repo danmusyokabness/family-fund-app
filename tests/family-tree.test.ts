@@ -2,15 +2,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   buildForest, wouldCreateCycle, ancestorIds, descendantIds, sanitizeNodePatch, changedFields, nameSimilarity,
-  rankClaimCandidates, rankParentCandidates, needsToConnect, type TreeNode,
+  rankClaimCandidates, rankParentCandidates, needsToConnect, editableNodeIds, addChildTargetIds, viewForViewer, withRanks,
+  nodeFromRow, rowFromPatch, HIDEABLE_FIELDS, type TreeNode, type TreeRow,
 } from "../lib/family-tree.ts";
 
 let counter = 0;
 function node(partial: Partial<TreeNode> & { id: string; name: string }): TreeNode {
   counter++;
   return {
-    spouseName: null, parentId: null, spouseId: null, memberId: null, dateOfBirth: null, birthdate: null,
-    workEducation: null, bio: null, phone: null, deletedAt: null, createdAt: `2026-01-01T00:00:${String(counter).padStart(2, "0")}.000Z`,
+    spouseName: null, spouseDetails: null, parentId: null, spouseId: null, memberId: null, dateOfBirth: null, birthdate: null,
+    workEducation: null, bio: null, phone: null, hiddenFields: [], hasPhoto: false, deletedAt: null,
+    createdAt: `2026-01-01T00:00:${String(counter).padStart(2, "0")}.000Z`, updatedAt: `2026-01-01T00:00:${String(counter).padStart(2, "0")}.000Z`,
     ...partial,
   };
 }
@@ -134,63 +136,137 @@ test("needsToConnect is true until a live node is linked to the member; deleted 
   assert.equal(needsToConnect([node({ id: "1", name: "X", memberId: "m1", deletedAt: "2026-10-01T00:00:00.000Z" })], "m1"), true);
 });
 
-import { nodeFromRow, rowFromPatch, snapshot, toPublicNode, planUndo, type TreeRow } from "../lib/family-tree.ts";
+
+// ---------------------------------------------------------------------
+// Who may edit what, and which details a person can hide
+// ---------------------------------------------------------------------
+// grandpa -> dad (member Dan) -> me (member Mia) -> kid; dad -> auntie; auntie -> cousin
+function family() {
+  return [
+    node({ id: "gp", name: "Grandpa" }),
+    node({ id: "dad", name: "Dad", parentId: "gp" }),
+    node({ id: "auntie", name: "Auntie", parentId: "gp" }),
+    node({ id: "me", name: "Mia", parentId: "dad", memberId: "m-mia" }),
+    node({ id: "sis", name: "Sis", parentId: "dad" }),
+    node({ id: "kid", name: "Kid", parentId: "me" }),
+    node({ id: "cousin", name: "Cousin", parentId: "auntie" }),
+  ];
+}
+
+test("a member may edit their own entry, their parent's and their children's, and nobody else's", () => {
+  const ids = [...editableNodeIds(family(), "me", false)].sort();
+  assert.deepEqual(ids, ["dad", "kid", "me"]);
+  // not siblings, grandparents, aunts, cousins
+  for (const other of ["sis", "gp", "auntie", "cousin"]) assert.ok(!ids.includes(other));
+});
+
+test("an admin may edit everyone; a member with no entry yet may edit nothing; removed people are not editable", () => {
+  assert.equal(editableNodeIds(family(), null, true).size, 7);
+  assert.equal(editableNodeIds(family(), null, false).size, 0);
+  assert.equal(editableNodeIds(family(), "not-a-node", false).size, 0);
+  const withGone = family().map((n) => (n.id === "kid" ? { ...n, deletedAt: "2026-10-01T00:00:00.000Z" } : n));
+  assert.ok(!editableNodeIds(withGone, "me", false).has("kid"));
+});
+
+test("a member may add a child under themselves (their own child) or under their parent (a brother or sister), nowhere else", () => {
+  assert.deepEqual([...addChildTargetIds(family(), "me", false)].sort(), ["dad", "me"]);
+  assert.equal(addChildTargetIds(family(), "gp", false).size, 1); // a root has no parent to add siblings under: only themselves
+  assert.equal(addChildTargetIds(family(), null, true).size, 7);
+});
+
+test("hidden details are removed for people who may not edit the entry, and kept for those who may", () => {
+  const person = node({ id: "p", name: "Pat", phone: "254700000001", bio: "Likes fishing", dateOfBirth: "1960-05-05", hiddenFields: ["phone", "dateOfBirth"] });
+  const stranger = viewForViewer(person, false);
+  assert.equal(stranger.phone, null);
+  assert.equal(stranger.dateOfBirth, null);
+  assert.equal(stranger.bio, "Likes fishing"); // not hidden
+  assert.deepEqual(stranger.hiddenFields, []); // the list of what is hidden is not revealed
+  assert.ok(!("deletedAt" in stranger));
+  const owner = viewForViewer(person, true);
+  assert.equal(owner.phone, "254700000001");
+  assert.equal(owner.dateOfBirth, "1960-05-05");
+  assert.deepEqual(owner.hiddenFields, ["phone", "dateOfBirth"]);
+});
+
+test("nothing is hidden unless the person chose to, so a phone number is visible by default", () => {
+  const person = node({ id: "p", name: "Pat", phone: "254700000001" });
+  assert.equal(viewForViewer(person, false).phone, "254700000001");
+});
+
+test("only real, hideable details can be hidden; the name and photo can never be hidden", () => {
+  assert.deepEqual([...HIDEABLE_FIELDS], ["phone", "dateOfBirth", "birthdate", "workEducation", "bio", "spouseName", "spouseDetails"]);
+  assert.deepEqual(sanitizeNodePatch({ hiddenFields: ["phone", "bio", "phone"] }, "2026-10-21"), { ok: true, patch: { hiddenFields: ["phone", "bio"] } });
+  assert.equal(sanitizeNodePatch({ hiddenFields: ["name"] }, "2026-10-21").ok, false);
+  assert.equal(sanitizeNodePatch({ hiddenFields: "phone" }, "2026-10-21").ok, false);
+  assert.deepEqual(sanitizeNodePatch({ hiddenFields: [] }, "2026-10-21"), { ok: true, patch: { hiddenFields: [] } });
+});
+
+test("spouse details are optional text, and an edit that only reorders the hidden list changes nothing", () => {
+  assert.deepEqual(sanitizeNodePatch({ spouseDetails: "  Teacher in Kisumu " }, "2026-10-21"), { ok: true, patch: { spouseDetails: "Teacher in Kisumu" } });
+  assert.deepEqual(changedFields({ hiddenFields: ["phone", "bio"] }, { hiddenFields: ["bio", "phone"] }), []);
+  assert.deepEqual(changedFields({ hiddenFields: [] }, { hiddenFields: ["phone"] }), ["hiddenFields"]);
+});
+
+test("everyone sees the same eldest-first order, even when a birth date is hidden from them", () => {
+  const nodes = withRanks([
+    node({ id: "young", name: "Young", dateOfBirth: "1990-01-01" }),
+    node({ id: "old", name: "Old", dateOfBirth: "1950-01-01" }),
+    node({ id: "mid", name: "Mid", dateOfBirth: "1970-01-01" }),
+  ]);
+  // A stranger sees them with the birth dates hidden, but the order still follows the real dates.
+  const hidden = nodes.map((n) => ({ ...n, dateOfBirth: null }));
+  assert.deepEqual(buildForest(hidden).map((b) => b.node.name), ["Old", "Mid", "Young"]);
+});
 
 const ROW: TreeRow = {
-  id: "n1", name: "Jane Doe", spouse_name: "John Doe", parent_id: "p1", spouse_id: null, member_id: "m1", date_of_birth: "1961-03-27",
-  birthdate: null, work_education: "Teacher", bio: "Hello", phone: "254700000001", deleted_at: null, created_at: "2026-01-01T00:00:00.000Z",
+  id: "n1", name: "Jane Doe", spouse_name: "John Doe", spouse_details: "Teacher", parent_id: "p1", spouse_id: null, member_id: "m1", date_of_birth: "1961-03-27",
+  birthdate: null, work_education: "Teacher", bio: "Hello", phone: "254700000001", hidden_fields: ["phone"], has_photo: true, deleted_at: null,
+  created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-02-01T00:00:00.000Z",
 };
 
 test("a database row becomes a node, and an edit becomes database columns", () => {
-  const node = nodeFromRow(ROW);
-  assert.equal(node.spouseName, "John Doe");
-  assert.equal(node.dateOfBirth, "1961-03-27");
-  assert.equal(node.memberId, "m1");
-  assert.deepEqual(rowFromPatch({ spouseName: "Jo", workEducation: null, nonsense: "x" } as never), { spouse_name: "Jo", work_education: null });
+  const n = nodeFromRow(ROW);
+  assert.equal(n.spouseName, "John Doe");
+  assert.equal(n.spouseDetails, "Teacher");
+  assert.deepEqual(n.hiddenFields, ["phone"]);
+  assert.equal(n.hasPhoto, true);
+  assert.equal(n.updatedAt, "2026-02-01T00:00:00.000Z");
+  assert.deepEqual(rowFromPatch({ spouseName: "Jo", hiddenFields: ["bio"], workEducation: null, nonsense: "x" } as never), { spouse_name: "Jo", hidden_fields: ["bio"], work_education: null });
+  // Rows from before the migration have no hidden list or photo flag.
+  const old = nodeFromRow({ ...ROW, hidden_fields: null, has_photo: null, updated_at: null });
+  assert.deepEqual(old.hiddenFields, []);
+  assert.equal(old.hasPhoto, false);
+  assert.equal(old.updatedAt, old.createdAt);
 });
 
-test("phone numbers are shown to the admin only", () => {
-  const node = nodeFromRow(ROW);
-  assert.equal(toPublicNode(node, true).phone, "254700000001");
-  assert.equal(toPublicNode(node, false).phone, null);
-  assert.ok(!("deletedAt" in toPublicNode(node, false)));
-});
+import { parsePhotoDataUrl, photoToBuffer, MAX_PHOTO_BYTES } from "../lib/tree-photo.ts";
 
-test("undo of an edit puts back only the fields that edit changed, never later changes to other fields", () => {
-  const before = { ...snapshot(nodeFromRow(ROW)) };
-  const after = { ...before, bio: "Changed bio", workEducation: "Principal" };
-  const current = { ...nodeFromRow(ROW), bio: "Changed bio", workEducation: "Principal", spouseName: "Edited later by someone else" };
-  const plan = planUndo({ action: "update", before, after, undoneAt: null }, current, "2026-10-23T00:00:00.000Z");
-  assert.equal(plan.ok, true);
-  if (plan.ok) {
-    assert.deepEqual(plan.update, { bio: "Hello", work_education: "Teacher" });
-    assert.ok(!("spouse_name" in plan.update)); // the later edit survives
+const dataUrl = (mime: string, bytes: number) => `data:${mime};base64,${Buffer.alloc(bytes, 7).toString("base64")}`;
+
+test("profile photos: a small JPEG, PNG or WebP is accepted", () => {
+  for (const mime of ["image/jpeg", "image/png", "image/webp"]) {
+    const result = parsePhotoDataUrl(dataUrl(mime, 5000));
+    assert.equal(result.ok, true, mime);
+    if (result.ok) assert.equal(result.bytes, 5000);
   }
 });
 
-test("undo of a removal brings the person back; undo of an addition removes them again", () => {
-  const removed = { ...nodeFromRow(ROW), memberId: null, deletedAt: "2026-10-01T00:00:00.000Z" };
-  const back = planUndo({ action: "delete", before: snapshot(removed), after: null, undoneAt: null }, removed, "now");
-  assert.deepEqual(back.ok && back.update, { deleted_at: null });
-
-  const live = { ...nodeFromRow(ROW), memberId: null };
-  const gone = planUndo({ action: "create", before: null, after: snapshot(live), undoneAt: null }, live, "2026-10-23T00:00:00.000Z");
-  assert.deepEqual(gone.ok && gone.update, { deleted_at: "2026-10-23T00:00:00.000Z" });
+test("profile photos: anything else is refused (other types, scripts, damaged text, too big, too small, not text)", () => {
+  assert.equal(parsePhotoDataUrl(dataUrl("image/svg", 5000)).ok, false); // SVG can carry scripts
+  assert.equal(parsePhotoDataUrl(dataUrl("image/gif", 5000)).ok, false);
+  assert.equal(parsePhotoDataUrl("data:text/html;base64,PHNjcmlwdD4=").ok, false);
+  assert.equal(parsePhotoDataUrl("not a data url").ok, false);
+  assert.equal(parsePhotoDataUrl("data:image/jpeg;base64,@@@@").ok, false);
+  assert.equal(parsePhotoDataUrl(dataUrl("image/jpeg", MAX_PHOTO_BYTES + 3)).ok, false);
+  assert.equal(parsePhotoDataUrl(dataUrl("image/jpeg", 10)).ok, false);
+  assert.equal(parsePhotoDataUrl(undefined).ok, false);
+  assert.equal(parsePhotoDataUrl(42).ok, false);
 });
 
-test("undo refuses what would leave a member floating or what was already done", () => {
-  const memberNode = nodeFromRow(ROW); // linked to a member
-  assert.equal(planUndo({ action: "create", before: null, after: snapshot(memberNode), undoneAt: null }, memberNode, "now").ok, false);
-  assert.equal(planUndo({ action: "update", before: {}, after: {}, undoneAt: "2026-10-01T00:00:00.000Z" }, memberNode, "now").ok, false);
-  assert.equal(planUndo({ action: "update", before: { bio: "a" }, after: { bio: "a" }, undoneAt: null }, memberNode, "now").ok, false); // nothing changed
-  assert.equal(planUndo({ action: "delete", before: null, after: null, undoneAt: null }, memberNode, "now").ok, false); // not removed
-  assert.equal(planUndo({ action: "update", before: { bio: "a" }, after: { bio: "b" }, undoneAt: null }, null, "now").ok, false); // gone
-  assert.equal(planUndo({ action: "restore", before: null, after: null, undoneAt: null }, memberNode, "now").ok, false);
-});
-
-test("undo of a claim unlinks the node, but only while it is still linked to that same member", () => {
-  const node = nodeFromRow(ROW);
-  const plan = planUndo({ action: "link", before: { memberId: null }, after: { memberId: "m1" }, undoneAt: null }, node, "now");
-  assert.deepEqual(plan.ok && plan.update, { member_id: null });
-  assert.equal(planUndo({ action: "link", before: { memberId: null }, after: { memberId: "someone-else" }, undoneAt: null }, node, "now").ok, false);
+test("a stored photo comes back as the same bytes with its type", () => {
+  const stored = dataUrl("image/jpeg", 300);
+  const back = photoToBuffer(stored);
+  assert.equal(back?.mime, "image/jpeg");
+  assert.equal(back?.data.length, 300);
+  assert.equal(photoToBuffer("rubbish"), null);
 });

@@ -9,6 +9,7 @@ import { redirect } from "next/navigation";
 import { getMemberSession, getAdminSession } from "@/lib/auth";
 import AppNav from "@/components/AppNav";
 import MemberDashboard from "@/components/MemberDashboard";
+import ChatWidget from "@/components/ChatWidget";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +34,7 @@ export default async function Home() {
       <div className="mx-auto max-w-screen-2xl px-4 py-6 sm:px-6">
         <MemberDashboard />
       </div>
+      <ChatWidget />
     </main>
   );
 }

@@ -52,7 +52,7 @@ test("garbage input is rejected without throwing", () => {
 // Security guards. These read the project's own source files, so a future
 // change that quietly removes a lock fails the test run.
 // ---------------------------------------------------------------------
-import { readdirSync as listDir, readFileSync as readText } from "node:fs";
+import { existsSync, readdirSync as listDir, readFileSync as readText } from "node:fs";
 import { fileURLToPath as toPath } from "node:url";
 
 const API_DIR = toPath(new URL("../app/api/", import.meta.url));
@@ -117,15 +117,26 @@ test("security: no password fallback or pasted key is written into the applicati
   assert.deepEqual(offenders, []);
 });
 
-test("security: the family tree never sends phone numbers to non-admins, and the board only ever returns a member's own private thread", () => {
+test("security: the family tree hides what people chose to hide, only lets people edit their own family circle, and the chat only returns what involves the member", () => {
   const tree = read("app/api/tree/route.ts");
-  assert.ok(tree.includes("toPublicNode(n, actor.isAdmin)"), "tree nodes must go through toPublicNode with the viewer's admin status");
-  assert.ok(tree.includes("delete body.phone"), "a non-admin must not be able to set a phone number");
-  const board = read("app/api/board/route.ts");
-  assert.ok(board.includes("visibleToMember"), "every board row must be checked with visibleToMember");
-  assert.ok(/\.eq\("member_id", actor\.memberId\)/.test(board), "the private thread query must ask only for this member's rows");
-  assert.ok(read("app/api/admin/board/route.ts").includes("requireAdmin"), "the inbox is admin only");
-  assert.ok(read("app/api/admin/tree/undo/route.ts").includes("requireAdmin"), "undo is admin only");
+  assert.ok(tree.includes("viewForViewer(n, ctx.editable.has(n.id))"), "every node must go through viewForViewer with the viewer's edit rights");
+  assert.ok(tree.includes("addChildTargets.has(parentId)"), "a member may only add under themselves or their parent");
+  const edit = read("app/api/tree/[id]/route.ts");
+  assert.ok(edit.includes("ctx.editable.has(id)"), "editing must check the viewer's edit rights");
+  assert.ok(edit.includes("Only an admin can move someone"), "only an admin may move a person to a different parent");
+  assert.ok(read("app/api/tree/[id]/photo/route.ts").includes("ctx.editable.has(id)"), "photos follow the same edit rights");
+  const chat = read("app/api/chat/route.ts");
+  assert.ok(chat.includes("visibleToMember"), "every chat row must be checked with visibleToMember");
+  assert.ok(chat.includes("recipient_member_id.eq."), "the private query must ask only for rows that involve this member");
+  assert.ok(/to_admin\.eq\.true,is_from_admin\.eq\.true/.test(chat), "the admin inbox must be limited to messages to or from the admin");
+});
+
+test("security: the removed features stay removed (change log, undo, the board page and the old board and inbox routes)", () => {
+  const root = toPath(new URL("../", import.meta.url));
+  for (const gone of ["app/api/tree/history", "app/api/admin/tree", "app/api/board", "app/api/admin/board", "app/board", "components/MessageBoard.tsx", "components/admin/BoardInbox.tsx"]) {
+    assert.equal(existsSync(`${root}${gone}`), false, `${gone} should have been deleted (run: git rm -r ${gone})`);
+  }
+  assert.ok(!read("lib/family-tree.ts").includes("planUndo"), "the undo logic should be gone");
 });
 
 test("security: a member's own place in the tree can never be removed, and a removal is never permanent", () => {
@@ -133,4 +144,20 @@ test("security: a member's own place in the tree can never be removed, and a rem
   assert.ok(route.includes("node.memberId"), "removing a member's own entry must be refused");
   assert.ok(route.includes("deleted_at"), "removal must be a soft delete");
   assert.ok(!/\.delete\(\)/.test(route), "the tree route must never hard-delete a row");
+});
+
+test("compatibility: no regular expression uses a flag or feature newer than the project's ES2017 setting (it broke a build once)", () => {
+  const offenders: string[] = [];
+  for (const dir of ["app", "lib", "components"]) {
+    const root = toPath(new URL(`../${dir}/`, import.meta.url));
+    for (const file of listDir(root, { recursive: true }) as string[]) {
+      if (!/\.(ts|tsx)$/.test(file)) continue;
+      const text = readText(`${root}${file}`, "utf8");
+      // a regex literal ending in the "s" (dot-all) flag and then used, or a look-behind, or a named group
+      if (/\/[gimuy]*s[gimuy]*\.(exec|test|match)\(/.test(text.replace(/\/[^/\n]*\/(?![gimuy]*s)/g, "")) || /\(\?<[=!]/.test(text) || /\(\?<[A-Za-z]/.test(text)) {
+        offenders.push(`${dir}/${file}`);
+      }
+    }
+  }
+  assert.deepEqual(offenders, [], "use [\\s\\S] instead of the s flag, and avoid look-behind or named groups");
 });

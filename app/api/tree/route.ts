@@ -1,31 +1,38 @@
 // app/api/tree/route.ts
 //
 // GET  -> the whole family tree (everyone who has not been removed), who
-//         is looking, and whether they still have to connect themselves
-//         to it (decision D20). Phone numbers are included for admins only.
-// POST -> add a person. Any logged-in member may (decision D12). The
-//         change is logged so an admin can undo it.
+//         is looking, which entries they may edit, and whether they still
+//         have to connect themselves to it (decision D20). Details a
+//         person has chosen to hide are left out unless the viewer may
+//         edit that entry.
+// POST -> add a person. A member may add a child under themselves or a
+//         brother or sister under their parent; an admin may add anywhere.
 
 import { NextRequest, NextResponse } from "next/server";
 import { getActor } from "@/lib/actors";
 import { supabaseAdmin } from "@/lib/supabase";
 import { nairobiTodayDateString } from "@/lib/dates";
-import { needsToConnect, rowFromPatch, sanitizeNodePatch, toPublicNode, nodeFromRow, type TreeRow } from "@/lib/family-tree";
-import { loadLiveNodes, recordHistory } from "@/lib/tree-data";
+import { needsToConnect, rowFromPatch, sanitizeNodePatch, viewForViewer, withRanks } from "@/lib/family-tree";
+import { loadEditContext } from "@/lib/tree-data";
 
 export async function GET() {
   const actor = await getActor();
   if (!actor) return NextResponse.json({ error: "Not logged in." }, { status: 401 });
 
   try {
-    const nodes = await loadLiveNodes(supabaseAdmin());
-    const mine = actor.memberId ? nodes.find((n) => n.memberId === actor.memberId) ?? null : null;
+    const ctx = await loadEditContext(supabaseAdmin(), actor);
+    // Ranks come from the REAL birth dates, so everyone sees the same eldest-first order even when a date is hidden.
+    const ranked = withRanks(ctx.nodes);
     return NextResponse.json({
-      nodes: nodes.map((n) => toPublicNode(n, actor.isAdmin)),
-      me: { memberId: actor.memberId, name: actor.name, nodeId: mine?.id ?? null },
+      nodes: ranked.map((n) => viewForViewer(n, ctx.editable.has(n.id))),
+      me: { memberId: actor.memberId, name: actor.name, nodeId: ctx.mine?.id ?? null },
       isAdmin: actor.isAdmin,
+      editableIds: [...ctx.editable],
+      addChildIds: [...ctx.addChildTargets],
+      // A member whose entry has no parent yet may add one.
+      canAddParent: Boolean(ctx.mine && !ctx.nodes.some((n) => n.id === ctx.mine?.parentId)),
       // A member must be placed in the tree; the main admin login is not a member.
-      needsToConnect: actor.memberId ? needsToConnect(nodes, actor.memberId) : false,
+      needsToConnect: actor.memberId ? needsToConnect(ctx.nodes, actor.memberId) : false,
     });
   } catch {
     return NextResponse.json({ error: "Could not load the family tree." }, { status: 500 });
@@ -43,31 +50,34 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
 
-  // Phone numbers on the tree are an admin detail.
-  if (!actor.isAdmin) delete body.phone;
-
   const result = sanitizeNodePatch(body, nairobiTodayDateString());
   if (!result.ok) return NextResponse.json({ error: result.errors.join(" ") }, { status: 400 });
   if (!result.patch.name) return NextResponse.json({ error: "A name is required." }, { status: 400 });
 
   const db = supabaseAdmin();
-  const nodes = await loadLiveNodes(db);
+  const ctx = await loadEditContext(db, actor);
+  const parentId = result.patch.parentId ?? null;
 
-  if (result.patch.parentId && !nodes.some((n) => n.id === result.patch.parentId)) {
+  if (parentId && !ctx.nodes.some((n) => n.id === parentId)) {
     return NextResponse.json({ error: "That parent could not be found." }, { status: 400 });
   }
-  if (result.patch.spouseId && !nodes.some((n) => n.id === result.patch.spouseId)) {
+  if (!actor.isAdmin) {
+    if (!parentId || !ctx.addChildTargets.has(parentId)) {
+      return NextResponse.json(
+        { error: "You can add a child under yourself, or a brother or sister under your parent. Ask an admin for anything else." },
+        { status: 403 }
+      );
+    }
+  }
+  if (result.patch.spouseId && !ctx.nodes.some((n) => n.id === result.patch.spouseId)) {
     return NextResponse.json({ error: "That spouse could not be found." }, { status: 400 });
   }
 
   const { data, error } = await db
     .from("family_nodes")
     .insert({ ...rowFromPatch(result.patch), created_by_member_id: actor.memberId })
-    .select("*")
-    .single<TreeRow>();
+    .select("id")
+    .single<{ id: string }>();
   if (error || !data) return NextResponse.json({ error: "Could not add that person." }, { status: 500 });
-
-  const created = nodeFromRow(data);
-  await recordHistory(db, { nodeId: created.id, actor, action: "create", before: null, after: created });
-  return NextResponse.json({ ok: true, id: created.id });
+  return NextResponse.json({ ok: true, id: data.id });
 }

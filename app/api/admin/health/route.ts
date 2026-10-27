@@ -102,6 +102,7 @@ export async function GET() {
       .from("message_board")
       .select("id", { count: "exact", head: true })
       .eq("is_private", true)
+      .eq("to_admin", true)
       .eq("is_from_admin", false)
       .is("read_at", null)
       .is("deleted_at", null);

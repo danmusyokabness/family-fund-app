@@ -188,11 +188,15 @@ Record bank withdrawals and other expenses (not M-PESA charges, which come in wi
 
 ---
 
-## The family tree and the board
+## The family tree and the chat
 
-* **Family tree** (menu: Family tree). The first time a member opens it they are asked "Where are you in the family?" and must pick their place (take over an existing entry that is them, or add themselves under their parent). Everyone can then add people and fix details. Every change is recorded at the bottom of the page, and **you (admin) will see an Undo button** next to each one. Nothing is ever deleted for good. Phone numbers are visible to admins only. Tip: fill in **dates of birth**: the member lists and the ledger are then put in order, eldest first, automatically.
-* **Board** (menu: Board). Everyone can post to the family board. Members can also write **privately to the admin**. You will get a **text message** when someone does (to the phone number in Setup, and to any member you marked as an admin), and the **Messages** tab in the admin area shows the conversation and lets you reply. You can remove any post on the board (a "Remove" link appears on each).
+* **Family tree** (menu: Family tree). It is drawn as a real tree: small cards with a photo and a name, joined by lines from parent to child, brothers and sisters side by side, children below. Tap a card to see more. The first time a member opens it they are asked "Where are you in the family?" and pick their place (take over an entry that is them, or add themselves under their parent).
+  * Everyone can **edit their own entry, their parent's entry and their children's entries**, and add their own child, a brother or sister, or their parent. Only you (admin) can edit anyone else or move people around.
+  * Everyone chooses what the family can see: when editing, each detail has a **"Show to the family"** box. Name and photo are always shown. A detail someone hides is still visible to that person, their parent, their children and you.
+  * Add a **photo** from the edit screen. It is shrunk automatically.
+  * Tip: fill in **dates of birth**; the member lists and the ledger then go in order, eldest first, automatically (the date itself can be hidden).
+* **Chat** (the round button at the bottom right of the home page and of the admin area). One chat with a **To:** choice at the top: **Everyone**, a particular member (a private chat that nobody else can see, not even you), or the **Admin**. You get a **text message** when a member writes to you privately (to the phone number in Setup, and to any member you marked as an admin). Messages to you appear in the same chat as extra conversations; pick one and reply. Anyone can remove their own message, and you can remove anything on the public chat.
 
 ## What is not built yet
 
-* **Automatic M-PESA intake** (Daraja): payments still arrive by importing a statement. This is planned last and needs approval from Safaricom, which can take days or weeks.
+* **Automatic M-PESA intake**: payments still arrive by importing a statement. A free option that keeps your Till (forwarding the payment SMS to the app) is being explored; it needs a few sample payment SMS from you. Daraja was dropped.
