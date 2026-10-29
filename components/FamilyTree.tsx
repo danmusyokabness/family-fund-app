@@ -12,10 +12,16 @@
 // see. A member who has no place in the tree yet must first say where they
 // are (decision D20).
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   buildForest,
+  clampZoom,
+  colourSlot,
   descendantIds,
+  fitZoom,
+  generationOf,
+  MAX_ZOOM,
+  MIN_ZOOM,
   rankClaimCandidates,
   rankParentCandidates,
   type PublicTreeNode,
@@ -32,6 +38,11 @@ interface TreeData {
   canAddParent: boolean;
   needsToConnect: boolean;
 }
+
+// useLayoutEffect on the page, plain useEffect while the server prepares the first view (where layout effects do nothing).
+const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
+
+const GENERATION_NAMES = ["Oldest generation", "Their children", "Next generation", "Next generation", "Next generation", "Next generation", "Next generation", "Next generation"];
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -445,12 +456,14 @@ function ConnectToTree({ data, onDone }: { data: TreeData; onDone: () => void })
 // ---------------------------------------------------------------------------
 function Branch({
   branch,
+  depth,
   data,
   collapsed,
   toggle,
   select,
 }: {
   branch: TreeBranch;
+  depth: number;
   data: TreeData;
   collapsed: Set<string>;
   toggle: (id: string) => void;
@@ -463,7 +476,7 @@ function Branch({
 
   return (
     <li>
-      <div className="fwrap">
+      <div className={`fwrap fgen-${colourSlot(depth)}`}>
         <button type="button" className={`fcard ${isMe ? "me" : ""}`} onClick={() => select(node)} title={node.name}>
           <Photo node={node} />
           <span className="fcard-name">{node.name}</span>
@@ -478,7 +491,7 @@ function Branch({
       {hasKids && !closed && (
         <ul>
           {branch.children.map((child) => (
-            <Branch key={child.node.id} branch={child} data={data} collapsed={collapsed} toggle={toggle} select={select} />
+            <Branch key={child.node.id} branch={child} depth={depth + 1} data={data} collapsed={collapsed} toggle={toggle} select={select} />
           ))}
         </ul>
       )}
@@ -492,6 +505,18 @@ export default function FamilyTree() {
   const [selected, setSelected] = useState<PublicTreeNode | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+  // Zoom: the tree starts fitted to the screen; the buttons and the bar change the zoom, and scrollbars appear when it is bigger than the screen.
+  const [zoom, setZoom] = useState(1);
+  const [fitted, setFitted] = useState(true);
+  const [natural, setNatural] = useState<{ width: number; height: number } | null>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const fittedRef = useRef(true);
+  const keepCentre = useRef<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    fittedRef.current = fitted;
+  }, [fitted]);
 
   const load = useCallback(async () => {
     try {
@@ -511,6 +536,67 @@ export default function FamilyTree() {
   }, [load]);
 
   const forest = useMemo(() => (data ? buildForest(asTreeNodes(data.nodes)) : []), [data]);
+  const generations = useMemo(() => generationOf(forest), [forest]);
+  const generationCount = useMemo(() => (generations.size === 0 ? 0 : Math.max(...generations.values()) + 1), [generations]);
+
+  // Measure the tree at full size (layout size ignores the zoom) and, while "fitted", choose the zoom that shows all of it.
+  const measure = useCallback(() => {
+    const content = contentRef.current;
+    const viewport = viewportRef.current;
+    if (!content || !viewport) return;
+    const size = { width: content.offsetWidth, height: content.offsetHeight };
+    setNatural((previous) => (previous && previous.width === size.width && previous.height === size.height ? previous : size));
+    if (fittedRef.current) {
+      const available = { width: viewport.clientWidth - 8, height: Math.max(260, window.innerHeight * 0.72) - 8 };
+      setZoom(fitZoom(size, available));
+    }
+  }, []);
+
+  const showingTree = Boolean(data && !data.needsToConnect && forest.length > 0);
+  useEffect(() => {
+    if (!showingTree) return;
+    measure();
+    const content = contentRef.current;
+    const viewport = viewportRef.current;
+    if (!content || !viewport || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(content);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [showingTree, measure]);
+
+  // After a manual zoom, keep whatever was in the middle of the screen in the middle.
+  useIsoLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    const centre = keepCentre.current;
+    if (!viewport || !centre) return;
+    viewport.scrollLeft = centre.x * viewport.scrollWidth - viewport.clientWidth / 2;
+    viewport.scrollTop = centre.y * viewport.scrollHeight - viewport.clientHeight / 2;
+    keepCentre.current = null;
+  }, [zoom]);
+
+  function setZoomManually(next: number) {
+    const viewport = viewportRef.current;
+    if (viewport && viewport.scrollWidth > 0 && viewport.scrollHeight > 0) {
+      keepCentre.current = {
+        x: (viewport.scrollLeft + viewport.clientWidth / 2) / viewport.scrollWidth,
+        y: (viewport.scrollTop + viewport.clientHeight / 2) / viewport.scrollHeight,
+      };
+    }
+    setFitted(false);
+    fittedRef.current = false;
+    setZoom(clampZoom(next));
+  }
+
+  function fitToScreen() {
+    setFitted(true);
+    fittedRef.current = true;
+    measure();
+    if (viewportRef.current) {
+      viewportRef.current.scrollLeft = 0;
+      viewportRef.current.scrollTop = 0;
+    }
+  }
 
   function toggle(id: string) {
     setCollapsed((prev) => {
@@ -546,6 +632,9 @@ export default function FamilyTree() {
     setSelected(null);
     setEditing(null);
   };
+  const activeNode = selected ?? (editing && editing.mode === "edit" ? editing.node : null);
+  const activeDepth = activeNode ? generations.get(activeNode.id) : undefined;
+  const modalColour = activeDepth !== undefined ? `fgen-${colourSlot(activeDepth)}` : "";
 
   return (
     <div className="space-y-4">
@@ -561,15 +650,68 @@ export default function FamilyTree() {
       {forest.length === 0 ? (
         <p className="paper-card p-4 text-sm text-ink-soft">The tree is empty.</p>
       ) : (
-        <div className="paper-card overflow-x-auto">
-          <div className="ftree">
-            <ul>
-              {forest.map((branch) => (
-                <Branch key={branch.node.id} branch={branch} data={data} collapsed={collapsed} toggle={toggle} select={setSelected} />
-              ))}
-            </ul>
+        <>
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <button type="button" onClick={() => setZoomManually(zoom / 1.25)} disabled={zoom <= MIN_ZOOM + 0.001} className="btn-secondary px-3 py-1" aria-label="Zoom out">
+              −
+            </button>
+            <input
+              type="range"
+              min={Math.round(MIN_ZOOM * 100)}
+              max={Math.round(MAX_ZOOM * 100)}
+              step={5}
+              value={Math.round(zoom * 100)}
+              onChange={(e) => setZoomManually(Number(e.target.value) / 100)}
+              className="w-36 sm:w-56"
+              aria-label="Zoom"
+            />
+            <button type="button" onClick={() => setZoomManually(zoom * 1.25)} disabled={zoom >= MAX_ZOOM - 0.001} className="btn-secondary px-3 py-1" aria-label="Zoom in">
+              +
+            </button>
+            <span className="w-12 text-xs text-ink-soft">{Math.round(zoom * 100)}%</span>
+            <button type="button" onClick={fitToScreen} className={`px-3 py-1 text-xs ${fitted ? "btn-primary" : "btn-secondary"}`}>
+              Fit to screen
+            </button>
+            <button type="button" onClick={() => setZoomManually(1)} className="btn-secondary px-3 py-1 text-xs">
+              100%
+            </button>
           </div>
-        </div>
+
+          {generationCount > 0 && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-soft">
+              {Array.from({ length: Math.min(generationCount, 8) }, (_, g) => (
+                <span key={g} className={`fgen-${colourSlot(g)} flex items-center gap-1.5`}>
+                  <span style={{ width: 12, height: 12, borderRadius: 4, background: "var(--g)", display: "inline-block" }} />
+                  {g === 0 ? GENERATION_NAMES[0] : `Generation ${g + 1}`}
+                </span>
+              ))}
+            </div>
+          )}
+
+          <div ref={viewportRef} className="paper-card" style={{ overflow: "auto", maxHeight: "72vh" }}>
+            <div
+              style={{
+                width: natural ? natural.width * zoom : undefined,
+                height: natural ? natural.height * zoom : undefined,
+                margin: "0 auto",
+              }}
+            >
+              <div
+                ref={contentRef}
+                style={{ transform: `scale(${zoom})`, transformOrigin: "top left", width: "max-content", visibility: natural ? "visible" : "hidden" }}
+              >
+                <div className="ftree">
+                  <ul>
+                    {forest.map((branch) => (
+                      <Branch key={branch.node.id} branch={branch} depth={0} data={data} collapsed={collapsed} toggle={toggle} select={setSelected} />
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p className="text-xs text-ink-soft">Use the bar or the + and − buttons to zoom. When it is bigger than the screen, scroll to move around.</p>
+        </>
       )}
 
       {data.isAdmin && (
@@ -579,7 +721,11 @@ export default function FamilyTree() {
       {/* ---- Details / edit panel ---- */}
       {(selected || editing) && (
         <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={closeAll}>
-          <div className="paper-card max-h-[90vh] w-full max-w-md overflow-y-auto rounded-b-none p-5 sm:rounded-b-xl" onClick={(e) => e.stopPropagation()}>
+          <div
+            className={`paper-card max-h-[90vh] w-full max-w-md overflow-y-auto rounded-b-none p-5 sm:rounded-b-xl ${modalColour}`}
+            style={activeDepth !== undefined ? { borderTop: "6px solid var(--g)" } : undefined}
+            onClick={(e) => e.stopPropagation()}
+          >
             {editing ? (
               <PersonForm
                 key={editing.mode === "edit" ? editing.node.id : editing.mode === "add" ? `add-${editing.parentId}` : "add-parent"}

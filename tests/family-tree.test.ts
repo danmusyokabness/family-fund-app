@@ -270,3 +270,51 @@ test("a stored photo comes back as the same bytes with its type", () => {
   assert.equal(back?.data.length, 300);
   assert.equal(photoToBuffer("rubbish"), null);
 });
+
+import { generationOf, colourSlot, GENERATION_COLOURS, clampZoom, fitZoom, MIN_ZOOM, MAX_ZOOM } from "../lib/family-tree.ts";
+
+test("generations: the top of the tree is generation 0, their children 1, and cousins share a generation", () => {
+  const depth = generationOf(buildForest(family()));
+  assert.equal(depth.get("gp"), 0);
+  assert.equal(depth.get("dad"), 1);
+  assert.equal(depth.get("auntie"), 1);
+  assert.equal(depth.get("me"), 2);
+  assert.equal(depth.get("cousin"), 2); // a cousin is in the same generation as me
+  assert.equal(depth.get("kid"), 3);
+  assert.equal(depth.size, 7);
+});
+
+test("generations: separate family lines each start at generation 0, and an empty tree has none", () => {
+  const depth = generationOf(buildForest([node({ id: "a", name: "A" }), node({ id: "b", name: "B" }), node({ id: "c", name: "C", parentId: "b" })]));
+  assert.equal(depth.get("a"), 0);
+  assert.equal(depth.get("b"), 0);
+  assert.equal(depth.get("c"), 1);
+  assert.equal(generationOf([]).size, 0);
+});
+
+test("each generation gets its own colour, and very deep trees cycle back to the first colours", () => {
+  assert.equal(GENERATION_COLOURS, 8);
+  const slots = [0, 1, 2, 3, 4, 5, 6, 7].map(colourSlot);
+  assert.equal(new Set(slots).size, 8); // eight different colours
+  assert.equal(colourSlot(8), 0);
+  assert.equal(colourSlot(9), 1);
+  assert.equal(colourSlot(-1), 7); // never out of range
+});
+
+test("zoom is kept between the smallest and largest allowed, and nonsense becomes 100%", () => {
+  assert.equal(clampZoom(0.01), MIN_ZOOM);
+  assert.equal(clampZoom(50), MAX_ZOOM);
+  assert.equal(clampZoom(1.25), 1.25);
+  assert.equal(clampZoom(NaN), 1);
+});
+
+test("fit to screen: a wide tree shrinks to the width, a tall one to the height, a small one stays at 100%", () => {
+  const room = { width: 1000, height: 600 };
+  assert.equal(fitZoom({ width: 2000, height: 300 }, room), 0.5); // too wide
+  assert.equal(fitZoom({ width: 500, height: 1200 }, room), 0.5); // too tall
+  assert.equal(fitZoom({ width: 2000, height: 2400 }, room), 0.25); // both: the tighter limit wins
+  assert.equal(fitZoom({ width: 400, height: 200 }, room), 1); // already fits: never enlarged
+  assert.equal(fitZoom({ width: 100000, height: 100 }, room), MIN_ZOOM); // never smaller than the minimum
+  assert.equal(fitZoom({ width: 0, height: 0 }, room), 1); // nothing measured yet
+  assert.equal(fitZoom({ width: 500, height: 500 }, { width: 0, height: 0 }), 1);
+});

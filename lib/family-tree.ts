@@ -469,3 +469,43 @@ export function rowFromPatch(patch: Partial<Record<keyof TreeNode, unknown>>): R
   }
   return row;
 }
+
+// ---------------------------------------------------------------------
+// How the tree is drawn: colours by generation, and fitting it to the screen.
+// ---------------------------------------------------------------------
+
+/** How many different generation colours there are; deeper generations start again from the first. */
+export const GENERATION_COLOURS = 8;
+
+/** Which generation each person is in: 0 for the top of the tree, 1 for their children, and so on. */
+export function generationOf(forest: TreeBranch[]): Map<string, number> {
+  const depths = new Map<string, number>();
+  const walk = (branch: TreeBranch, depth: number) => {
+    depths.set(branch.node.id, depth);
+    for (const child of branch.children) walk(child, depth + 1);
+  };
+  for (const root of forest) walk(root, 0);
+  return depths;
+}
+
+/** The colour slot (0 to GENERATION_COLOURS - 1) for a generation. */
+export function colourSlot(generation: number): number {
+  return ((generation % GENERATION_COLOURS) + GENERATION_COLOURS) % GENERATION_COLOURS;
+}
+
+export const MIN_ZOOM = 0.15;
+export const MAX_ZOOM = 2;
+
+export function clampZoom(zoom: number): number {
+  if (!Number.isFinite(zoom)) return 1;
+  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
+}
+
+/**
+ * The zoom at which the whole tree fits in the space available, never
+ * enlarging past full size. A tree that already fits is shown at 100%.
+ */
+export function fitZoom(natural: { width: number; height: number }, available: { width: number; height: number }): number {
+  if (natural.width <= 0 || natural.height <= 0 || available.width <= 0 || available.height <= 0) return 1;
+  return clampZoom(Math.min(1, available.width / natural.width, available.height / natural.height));
+}

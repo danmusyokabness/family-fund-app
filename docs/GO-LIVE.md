@@ -190,7 +190,7 @@ Record bank withdrawals and other expenses (not M-PESA charges, which come in wi
 
 ## The family tree and the chat
 
-* **Family tree** (menu: Family tree). It is drawn as a real tree: small cards with a photo and a name, joined by lines from parent to child, brothers and sisters side by side, children below. Tap a card to see more. The first time a member opens it they are asked "Where are you in the family?" and pick their place (take over an entry that is them, or add themselves under their parent).
+* **Family tree** (menu: Family tree). It is drawn as a real tree: small cards with a photo and a name, joined by lines from parent to child, brothers and sisters side by side, children below, and **each generation has its own colour**. It opens **shrunk to fit your screen**: use the bar or the + and − buttons to zoom in (scroll to move around), **Fit to screen** to go back, or **100%** for full size. Tap a card to see more. The first time a member opens it they are asked "Where are you in the family?" and pick their place (take over an entry that is them, or add themselves under their parent).
   * Everyone can **edit their own entry, their parent's entry and their children's entries**, and add their own child, a brother or sister, or their parent. Only you (admin) can edit anyone else or move people around.
   * Everyone chooses what the family can see: when editing, each detail has a **"Show to the family"** box. Name and photo are always shown. A detail someone hides is still visible to that person, their parent, their children and you.
   * Add a **photo** from the edit screen. It is shrunk automatically.
