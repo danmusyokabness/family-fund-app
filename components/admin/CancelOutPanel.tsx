@@ -18,6 +18,8 @@ interface Entry {
   purpose?: string;
   /** The M-PESA fee charged on this deposit, in KES. */
   fee?: number;
+  /** A fee whose deposit was erased earlier (decided by the server). */
+  orphanFee?: boolean;
 }
 
 function money(n: number): string {
@@ -65,14 +67,14 @@ export default function CancelOutPanel({ onDone }: { onDone: () => void }) {
   const out = picked.expenses.reduce((n, e) => n + e.amount, 0);
   const back = picked.deposits.reduce((n, d) => n + d.amount, 0);
   const check = checkCancelOut(
-    picked.expenses.map((e) => ({ id: e.id, kind: e.kind, amount: e.amount })),
+    picked.expenses.map((e) => ({ id: e.id, kind: e.kind, amount: e.amount, orphanFee: e.orphanFee === true })),
     picked.deposits.map((d) => ({ id: d.id, kind: d.kind, amount: d.amount, fee: d.fee ?? 0, creditedToMonthlyDues: false }))
   );
   const fees = picked.deposits.reduce((n, d) => n + (d.fee ?? 0), 0);
 
   async function submit() {
     if (!check.ok) return;
-    if (!window.confirm(`Erase ${picked.expenses.length} withdrawal(s), ${picked.deposits.length} deposit(s) and their fees for good? The Total in account will not change. This cannot be undone.`)) return;
+    if (!window.confirm(`Erase ${picked.expenses.length} withdrawal(s) or hanging fee(s), ${picked.deposits.length} deposit(s) and their fees for good? The Total in account will not change. This cannot be undone.`)) return;
     setBusy(true);
     setError(null);
     setMessage(null);
@@ -84,7 +86,7 @@ export default function CancelOutPanel({ onDone }: { onDone: () => void }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Could not cancel them out.");
-      setMessage(`Erased ${data.removedExpenses} withdrawal(s), ${data.removedPayments} deposit(s) and ${data.removedFees} fee(s). The Total in account did not change.`);
+      setMessage(`Erased ${data.removedExpenses} withdrawal(s) or hanging fee(s), ${data.removedPayments} deposit(s) and ${data.removedFees} fee(s) charged on them. The Total in account did not change.`);
       await load();
       onDone();
     } catch (err) {
@@ -105,7 +107,7 @@ export default function CancelOutPanel({ onDone }: { onDone: () => void }) {
       <p className="mt-2 text-xs text-ink-soft">
         If money was taken out and later put back, erase the withdrawal, the deposit and the M-PESA fee charged on that deposit here. The deposit, less its fee, must
         equal the withdrawal, so the Total in account stays the same. A few cents of difference (deposits are whole shillings, fees are not) stay in the fund as one
-        line called Rounding. Nothing is kept about what was erased. Deposits that pay off a member&apos;s monthly dues are not offered.
+        line called Rounding. A fee left behind after an earlier cancel-out is listed as a hanging fee: erase it together with a deposit that was paid in to cover it, and whatever that deposit paid over the fee stays in the fund as other income. Nothing is kept about what was erased. Deposits that pay off a member&apos;s monthly dues are not offered.
       </p>
 
       {error && <p className="mt-2 text-sm text-danger">{error}</p>}
@@ -115,7 +117,7 @@ export default function CancelOutPanel({ onDone }: { onDone: () => void }) {
       {expenses !== null && (
         <div className="mt-3 grid gap-4 sm:grid-cols-2">
           <div>
-            <h3 className="mb-1 text-xs font-medium text-ink-soft">1. The withdrawal(s)</h3>
+            <h3 className="mb-1 text-xs font-medium text-ink-soft">1. The withdrawal(s), or a hanging fee</h3>
             <div className="max-h-56 overflow-y-auto rounded-md border border-line">
               {expenses.length === 0 && <p className="p-3 text-xs text-ink-soft">No withdrawals recorded.</p>}
               {expenses.map((e) => (
@@ -160,7 +162,9 @@ export default function CancelOutPanel({ onDone }: { onDone: () => void }) {
           <span className="text-xs text-ink-soft">
             Withdrawals KES {money(out)} &middot; Deposits KES {money(back)}
             {fees > 0 && <> &middot; Fees KES {money(fees)}</>}
-            {check.ok && check.leftoverCents > 0 && <span className="block">KES {money(check.leftoverCents / 100)} stays in the fund as Rounding.</span>}
+            {check.ok && check.leftoverCents > 0 && (
+              <span className="block">KES {money(check.leftoverCents / 100)} stays in the fund as {check.leftoverIsRounding ? "Rounding" : "other income"}.</span>
+            )}
             {picked.expenses.length > 0 && picked.deposits.length > 0 && !check.ok && <span className="block" style={{ color: "var(--ochre)" }}>{check.error}</span>}
           </span>
         </div>

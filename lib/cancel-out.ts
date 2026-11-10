@@ -14,8 +14,13 @@
 // the cent.
 //
 // What can be cancelled out:
-//   * withdrawals and "other" expenses (a fee on its own can never be chosen:
-//     fees only go with the deposit that caused them);
+//   * withdrawals and "other" expenses;
+//   * a HANGING fee: an M-PESA fee whose deposit was erased earlier (the server
+//     decides which fees are hanging and marks them orphanFee). A fee that
+//     still has its deposit can never be chosen on its own: it goes with that
+//     deposit. A hanging fee counts like money taken out, so a deposit that was
+//     later paid in to cover it can be erased against it; whatever is left over
+//     stays in the fund as one plain line;
 //   * deposits that arrived as M-PESA or manual payments and are NOT credited
 //     to a member's monthly dues (removing one of those would change that
 //     member's ledger). A put-back is normally a recovery, booster or
@@ -25,6 +30,8 @@ export interface CancelOutExpense {
   id: string;
   kind: string;
   amount: number;
+  /** True only for an M-PESA fee whose deposit is already gone (decided by the server). */
+  orphanFee?: boolean;
 }
 
 export interface CancelOutDeposit {
@@ -54,13 +61,15 @@ export type CancelOutCheck =
       totalCents: number;
       /** M-PESA fees on the deposits, in cents. */
       feeCents: number;
-      /** What the deposits bring in beyond the withdrawals once their fees are paid: kept as a "Rounding" line. 0 = nothing to keep. */
+      /** What the deposits bring in beyond the withdrawals once their fees are paid: kept as one plain line. 0 = nothing to keep. */
       leftoverCents: number;
+      /** True when the leftover is only rounding (under KES 1 per deposit); false when it is real extra money (only possible with a hanging fee). */
+      leftoverIsRounding: boolean;
     }
   | { ok: false; error: string };
 
 export function checkCancelOut(expenses: CancelOutExpense[], deposits: CancelOutDeposit[]): CancelOutCheck {
-  if (expenses.length === 0) return { ok: false, error: "Choose at least one withdrawal." };
+  if (expenses.length === 0) return { ok: false, error: "Choose at least one withdrawal or hanging fee." };
   if (deposits.length === 0) return { ok: false, error: "Choose at least one deposit." };
   if (expenses.length > MAX_PER_SIDE || deposits.length > MAX_PER_SIDE) {
     return { ok: false, error: `Choose at most ${MAX_PER_SIDE} entries on each side.` };
@@ -70,8 +79,8 @@ export function checkCancelOut(expenses: CancelOutExpense[], deposits: CancelOut
   }
 
   for (const e of expenses) {
-    if (e.kind === "charge") return { ok: false, error: "An M-PESA fee cannot be chosen on its own. It is removed together with the deposit it was charged on." };
-    if (e.kind !== "withdrawal" && e.kind !== "other") return { ok: false, error: "Only withdrawals and other expenses can be cancelled out." };
+    if (e.kind === "charge" && !e.orphanFee) return { ok: false, error: "An M-PESA fee cannot be chosen on its own while its deposit is still recorded. It is removed together with that deposit." };
+    if (e.kind !== "withdrawal" && e.kind !== "other" && e.kind !== "charge") return { ok: false, error: "Only withdrawals, other expenses and hanging fees can be cancelled out." };
     if (!(toCents(e.amount) > 0)) return { ok: false, error: "A withdrawal with no amount cannot be cancelled out." };
   }
   for (const d of deposits) {
@@ -91,6 +100,8 @@ export function checkCancelOut(expenses: CancelOutExpense[], deposits: CancelOut
   const fees = deposits.reduce((sum, d) => sum + toCents(d.fee ?? 0), 0);
   const net = back - fees; // what the deposits really left in the fund
   const leftover = net - out;
+  const hasHangingFee = expenses.some((e) => e.kind === "charge");
+  const roundingLimit = deposits.length * ROUNDING_CENTS_PER_DEPOSIT;
 
   if (leftover < 0) {
     return {
@@ -100,7 +111,7 @@ export function checkCancelOut(expenses: CancelOutExpense[], deposits: CancelOut
         `KES ${kes(-leftover)} short. The Total in account would change, so this is refused. Add the deposit that covers the rest.`,
     };
   }
-  if (leftover >= deposits.length * ROUNDING_CENTS_PER_DEPOSIT) {
+  if (leftover >= roundingLimit && !hasHangingFee) {
     return {
       ok: false,
       error:
@@ -108,5 +119,5 @@ export function checkCancelOut(expenses: CancelOutExpense[], deposits: CancelOut
         `KES ${kes(leftover)} more. That is too much to be rounding, so nothing was changed. Check that the right entries are chosen.`,
     };
   }
-  return { ok: true, totalCents: out, feeCents: fees, leftoverCents: leftover };
+  return { ok: true, totalCents: out, feeCents: fees, leftoverCents: leftover, leftoverIsRounding: leftover < roundingLimit };
 }

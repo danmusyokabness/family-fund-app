@@ -170,6 +170,7 @@ test("security: cancelling out money records is the main admin only, checked for
   assert.ok(!route.includes('"cancel_out"'), "no cancel_out audit record may be written");
   assert.ok(route.includes("import_skip_receipts"), "erased receipt numbers must be remembered so an old statement cannot bring them back");
   assert.ok(!route.includes("requireAdmin()"), "a member-admin must not be able to delete money records");
+  assert.ok(route.includes("hangingFees") && route.includes("orphanFee: hangingIds.has"), "which fees are hanging must be decided on the server, never taken from the browser");
 });
 
 test("privacy: the list of erased receipts is never exported, and the cancel-out tool is only shown to the main admin", () => {

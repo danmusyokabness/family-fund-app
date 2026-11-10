@@ -4,9 +4,11 @@
 // M-PESA fee charged on that deposit, without changing the Total in account
 // (see lib/cancel-out.ts). Superadmin only, because it deletes money records.
 //
-// GET  -> the withdrawals / other expenses and the deposits that could be
-//         chosen (deposits credited to a member's monthly dues are left out),
-//         each deposit with the fee charged on it.
+// GET  -> the withdrawals / other expenses / hanging fees and the deposits that
+//         could be chosen (deposits credited to a member's monthly dues are left
+//         out), each deposit with the fee charged on it. A hanging fee is an
+//         M-PESA fee whose deposit was erased earlier; it can be erased against
+//         a deposit that was paid in to cover it.
 // POST { expenseIds, paymentIds } -> erases them, but ONLY if the money adds
 //         up: deposits minus their fees must equal the withdrawals, apart from
 //         a few cents of rounding, which is kept as one plain "Rounding" line.
@@ -20,6 +22,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireSuperAdmin } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { checkCancelOut, toCents } from "@/lib/cancel-out";
+import { fetchAllRows } from "@/lib/pagination";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -60,6 +63,28 @@ async function feesByReceipt(db: ReturnType<typeof supabaseAdmin>, receipts: str
   return { rows: (data ?? []) as Record<string, unknown>[], cents };
 }
 
+/** Fees whose deposit was erased earlier: charge rows whose receipt is on the erased list and that no payment holds any more. */
+async function hangingFees(db: ReturnType<typeof supabaseAdmin>, onlyIds?: string[]): Promise<ExpenseRow[] | null> {
+  let skipped: Set<string>;
+  try {
+    const rows = await fetchAllRows((range) => db.from("import_skip_receipts").select("mpesa_receipt").range(range.from, range.to));
+    skipped = new Set(rows.map((r) => String((r as { mpesa_receipt: string }).mpesa_receipt)));
+  } catch {
+    return null;
+  }
+  if (skipped.size === 0) return [];
+  let query = db.from("fund_expenses").select("id, kind, amount, occurred_at, description, mpesa_receipt").eq("kind", "charge").order("occurred_at", { ascending: false }).limit(200);
+  if (onlyIds) query = query.in("id", onlyIds);
+  const { data, error } = await query.returns<ExpenseRow[]>();
+  if (error) return null;
+  const erased = (data ?? []).filter((e) => e.mpesa_receipt && skipped.has(e.mpesa_receipt));
+  if (erased.length === 0) return [];
+  const { data: still, error: stillError } = await db.from("payments").select("mpesa_receipt").in("mpesa_receipt", erased.map((e) => e.mpesa_receipt as string));
+  if (stillError) return null;
+  const held = new Set((still ?? []).map((p) => String(p.mpesa_receipt)));
+  return erased.filter((e) => !held.has(e.mpesa_receipt as string));
+}
+
 export async function GET() {
   const auth = await requireSuperAdmin();
   if (!auth.ok) return auth.response;
@@ -82,6 +107,7 @@ export async function GET() {
     .returns<PaymentRow[]>();
   if (expenseError || paymentError) return NextResponse.json({ error: "Could not load the entries." }, { status: 500 });
 
+  const hanging = await hangingFees(db);
   const candidates = (payments ?? []).filter((p) => !creditedToMonthlyDues(p));
   const fees = await feesByReceipt(
     db,
@@ -90,7 +116,10 @@ export async function GET() {
   if (!fees) return NextResponse.json({ error: "Could not load the entries." }, { status: 500 });
 
   return NextResponse.json({
-    expenses: (expenses ?? []).map((e) => ({ id: e.id, kind: e.kind, amount: Number(e.amount), date: e.occurred_at, label: e.description ?? (e.kind === "withdrawal" ? "Withdrawal" : "Other expense") })),
+    expenses: [
+      ...(expenses ?? []).map((e) => ({ id: e.id, kind: e.kind, amount: Number(e.amount), date: e.occurred_at, label: e.description ?? (e.kind === "withdrawal" ? "Withdrawal" : "Other expense"), orphanFee: false })),
+      ...(hanging ?? []).map((e) => ({ id: e.id, kind: e.kind, amount: Number(e.amount), date: e.occurred_at, label: "Hanging M-PESA fee (its deposit is already gone)", orphanFee: true })),
+    ],
     deposits: candidates.map((p) => ({
       id: p.id,
       kind: p.kind,
@@ -130,6 +159,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "One of those entries no longer exists. Refresh and try again." }, { status: 404 });
   }
 
+  // A fee may be chosen on its own only when it is hanging (its deposit was erased earlier); the server decides that, never the browser.
+  const chosenCharges = (expenseRows ?? []).filter((e) => e.kind === "charge").map((e) => e.id as string);
+  let hangingIds = new Set<string>();
+  if (chosenCharges.length > 0) {
+    const found = await hangingFees(db, chosenCharges);
+    if (!found) return NextResponse.json({ error: "The database is not ready for this yet. Run db/008 in the Supabase SQL Editor first. Nothing was changed." }, { status: 500 });
+    hangingIds = new Set(found.map((f) => f.id));
+  }
+
   // The fee(s) charged on the chosen deposits go with them.
   const depositReceipts = (paymentRows ?? []).map((p) => p.mpesa_receipt as string | null).filter((r): r is string => !!r);
   const fees = await feesByReceipt(db, depositReceipts);
@@ -144,7 +182,7 @@ export async function POST(req: NextRequest) {
   }
 
   const check = checkCancelOut(
-    (expenseRows ?? []).map((e) => ({ id: e.id, kind: e.kind, amount: Number(e.amount) })),
+    (expenseRows ?? []).map((e) => ({ id: e.id, kind: e.kind, amount: Number(e.amount), orphanFee: hangingIds.has(e.id as string) })),
     (paymentRows ?? []).map((p) => ({
       id: p.id,
       kind: p.kind,
@@ -186,7 +224,7 @@ export async function POST(req: NextRequest) {
     if (addedReceipts.length > 0) await db.from("import_skip_receipts").delete().in("mpesa_receipt", addedReceipts);
   };
 
-  // 2. The few cents the deposits bring in beyond the withdrawals stay in the fund as one plain line.
+  // 2. What the deposits bring in beyond the withdrawals (a few cents of rounding, or the extra paid over a hanging fee) stays in the fund as one plain line.
   if (check.leftoverCents > 0) {
     const dates = (paymentRows ?? []).map((p) => String(p.paid_at)).sort();
     const latest = dates[dates.length - 1];
@@ -199,7 +237,7 @@ export async function POST(req: NextRequest) {
         source: "admin",
         paid_at: latest,
         match_status: "ignored",
-        note: "Rounding",
+        note: check.leftoverIsRounding ? "Rounding" : null,
       })
       .select("id")
       .single();
@@ -238,5 +276,6 @@ export async function POST(req: NextRequest) {
     totalKes: check.totalCents / 100,
     feeKes: check.feeCents / 100,
     roundingKes: check.leftoverCents / 100,
+    leftoverIsRounding: check.leftoverIsRounding,
   });
 }

@@ -505,16 +505,16 @@ test("a stray payment is described as other income, in plain words", () => {
 // ---------------------------------------------------------------------
 import { checkCancelOut, toCents } from "../lib/cancel-out.ts";
 
-const wd = (id: string, amount: number, kind = "withdrawal") => ({ id, kind, amount });
+const wd = (id: string, amount: number, kind = "withdrawal", orphanFee = false) => ({ id, kind, amount, orphanFee });
 const dep = (id: string, amount: number, extra: Partial<{ kind: string; creditedToMonthlyDues: boolean; fee: number }> = {}) => ({ id, kind: "manual", amount, creditedToMonthlyDues: false, ...extra });
 
 test("cancel out: a withdrawal and the deposit that put it back, equal amounts, no fee, is allowed with nothing left over", () => {
-  assert.deepEqual(checkCancelOut([wd("w", 10000)], [dep("d", 10000)]), { ok: true, totalCents: 1000000, feeCents: 0, leftoverCents: 0 });
+  assert.deepEqual(checkCancelOut([wd("w", 10000)], [dep("d", 10000)]), { ok: true, totalCents: 1000000, feeCents: 0, leftoverCents: 0, leftoverIsRounding: true });
 });
 
 test("cancel out: the fee charged on the deposit is part of the sum (deposit minus fee equals withdrawal)", () => {
   // a deposit of 1,010 with a fee of 10 leaves exactly the 1,000 that was taken out
-  assert.deepEqual(checkCancelOut([wd("w", 1000)], [dep("d", 1010, { fee: 10 })]), { ok: true, totalCents: 100000, feeCents: 1000, leftoverCents: 0 });
+  assert.deepEqual(checkCancelOut([wd("w", 1000)], [dep("d", 1010, { fee: 10 })]), { ok: true, totalCents: 100000, feeCents: 1000, leftoverCents: 0, leftoverIsRounding: true });
   // a deposit that only equals the withdrawal cannot also pay the fee: refused, and the message names the shortfall
   const short = checkCancelOut([wd("w", 1000)], [dep("d", 1000, { fee: 5.5 })]);
   assert.equal(short.ok, false);
@@ -524,7 +524,7 @@ test("cancel out: the fee charged on the deposit is part of the sum (deposit min
 test("cancel out: fees with cents and whole-shilling deposits leave a few cents, which are kept as rounding and never lost", () => {
   // withdrawal 100, deposit 101, fee 0.55 -> 100.45 reaches the fund: 0.45 is rounding
   const result = checkCancelOut([wd("w", 100)], [dep("d", 101, { fee: 0.55 })]);
-  assert.deepEqual(result, { ok: true, totalCents: 10000, feeCents: 55, leftoverCents: 45 });
+  assert.deepEqual(result, { ok: true, totalCents: 10000, feeCents: 55, leftoverCents: 45, leftoverIsRounding: true });
   // the books after: withdrawal gone (+100), deposit gone (-101), fee gone (+0.55), rounding line added (+0.45) -> unchanged
   assert.equal(toCents(100) - toCents(101) + toCents(0.55) + 45, 0);
 });
@@ -551,10 +551,29 @@ test("cancel out: money that does not add up is refused, and the message says by
   }
 });
 
+test("cancel out: a hanging fee (its deposit already erased) can be cancelled against a deposit paid in to cover it; the extra stays as other income", () => {
+  // the owner's case: a deposit of 105 and a hanging fee of 93 -> 12 stays in the fund
+  const result = checkCancelOut([wd("fee", 93, "charge", true)], [dep("d", 105)]);
+  assert.deepEqual(result, { ok: true, totalCents: 9300, feeCents: 0, leftoverCents: 1200, leftoverIsRounding: false });
+  // erasing the fee (+93) and the deposit (-105) and adding the 12 line leaves the total exactly as it was
+  assert.equal(93 * 100 - 105 * 100 + 1200, 0);
+  // a deposit that does not cover the fee is refused, naming the shortfall
+  const short = checkCancelOut([wd("fee", 93, "charge", true)], [dep("d", 90)]);
+  assert.equal(short.ok, false);
+  if (!short.ok) assert.ok(short.error.includes("KES 3 short"), short.error);
+});
+
+test("cancel out: a big leftover is only allowed together with a hanging fee, and a fee that still has its deposit can never be chosen on its own", () => {
+  assert.equal(checkCancelOut([wd("w", 93)], [dep("d", 105)]).ok, false); // 12 extra with no hanging fee is not rounding
+  const notHanging = checkCancelOut([wd("fee", 93, "charge", false)], [dep("d", 93)]);
+  assert.equal(notHanging.ok, false);
+  if (!notHanging.ok) assert.ok(notHanging.error.includes("still recorded"), notHanging.error);
+});
+
 test("cancel out: a fee can never be chosen on its own, and opening balances, adjustments and member-credited monthly deposits can never be cancelled", () => {
   const onlyFee = checkCancelOut([wd("c", 4.95, "charge")], [dep("d", 4.95)]);
   assert.equal(onlyFee.ok, false);
-  if (!onlyFee.ok) assert.ok(onlyFee.error.includes("together with the deposit"));
+  if (!onlyFee.ok) assert.ok(onlyFee.error.includes("still recorded"), onlyFee.error);
   assert.equal(checkCancelOut([wd("w", 100, "mystery")], [dep("d", 100)]).ok, false);
   assert.equal(checkCancelOut([wd("w", 100)], [dep("d", 100, { kind: "opening" })]).ok, false);
   assert.equal(checkCancelOut([wd("w", 100)], [dep("d", 100, { kind: "adjustment" })]).ok, false);
