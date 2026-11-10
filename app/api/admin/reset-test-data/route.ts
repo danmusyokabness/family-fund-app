@@ -57,6 +57,7 @@ export async function POST(req: NextRequest) {
   const tables = [
     "sms_log",
     "job_runs",
+    "import_skip_receipts",
     "login_attempts",
     "message_board",
     "payments",

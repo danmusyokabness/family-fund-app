@@ -15,6 +15,9 @@
 //     fund_expenses. A receipt already on file is skipped, never
 //     double-counted — the database's own unique constraint on
 //     mpesa_receipt is a second line of defence behind this check.
+//     A receipt that was erased on purpose (import_skip_receipts, written by
+//     the superadmin's "cancel out") is treated the same way: it is never
+//     brought back, so an old statement can be imported again safely.
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth";
@@ -25,6 +28,7 @@ import { extractStatementRowsFromPdf } from "@/lib/pdf-statement";
 import { matchPayment } from "@/lib/payment-matching";
 import { loadMembersForMatching } from "@/lib/load-members-for-matching";
 import { nairobiWallTimeToUtcIso } from "@/lib/dates";
+import { fetchAllRows } from "@/lib/pagination";
 
 interface ImportBody {
   csv?: string;
@@ -88,10 +92,19 @@ export async function POST(req: NextRequest) {
       ? db.from("fund_expenses").select("mpesa_receipt, kind").in("mpesa_receipt", chargeReceipts)
       : Promise.resolve({ data: [] as { mpesa_receipt: string; kind: string }[] }),
   ]);
+  // Receipts erased on purpose. If the table is not there yet (db/008 not run), nothing has been erased, so carry on.
+  let erasedReceipts = new Set<string>();
+  try {
+    const erased = await fetchAllRows((range) => db.from("import_skip_receipts").select("mpesa_receipt").range(range.from, range.to));
+    erasedReceipts = new Set(erased.map((r) => String((r as { mpesa_receipt: string }).mpesa_receipt)));
+  } catch {
+    erasedReceipts = new Set();
+  }
   const existingPaymentReceipts = new Set((existingPayments ?? []).map((p) => p.mpesa_receipt));
   const existingExpenseKeys = new Set((existingExpenses ?? []).map((e) => `${e.mpesa_receipt}|${e.kind}`));
 
   function isDuplicate(row: ParsedStatementRow): boolean {
+    if (erasedReceipts.has(row.receiptNo)) return true;
     if (row.kind === "payment") return existingPaymentReceipts.has(row.receiptNo);
     const kind = row.kind === "charge" ? "charge" : "other";
     return existingExpenseKeys.has(`${row.receiptNo}|${kind}`);

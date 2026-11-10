@@ -1,7 +1,7 @@
 // app/admin/page.tsx
 
 import { redirect } from "next/navigation";
-import { getAdminSession } from "@/lib/auth";
+import { getAdminSession, getSuperAdminSession } from "@/lib/auth";
 import LogoutButton from "@/components/LogoutButton";
 import AdminShell from "@/components/admin/AdminShell";
 
@@ -10,6 +10,8 @@ export const dynamic = "force-dynamic";
 export default async function AdminHome() {
   const isAdmin = await getAdminSession();
   if (!isAdmin) redirect("/admin/login");
+  // Only the main admin login sees the cancel-out tool; a member-admin never does.
+  const isSuperAdmin = await getSuperAdminSession();
 
   return (
     <main className="min-h-screen">
@@ -26,7 +28,7 @@ export default async function AdminHome() {
         </div>
       </header>
       <div className="mx-auto max-w-screen-2xl px-4 py-6 sm:px-6">
-        <AdminShell />
+        <AdminShell isSuperAdmin={isSuperAdmin} />
       </div>
     </main>
   );

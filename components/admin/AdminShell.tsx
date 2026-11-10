@@ -27,7 +27,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "setup", label: "Setup" },
 ];
 
-export default function AdminShell() {
+export default function AdminShell({ isSuperAdmin = false }: { isSuperAdmin?: boolean }) {
   const [tab, setTab] = useState<Tab>("members");
 
   return (
@@ -48,7 +48,7 @@ export default function AdminShell() {
       </div>
       <div className="ledger-panel p-4 sm:p-6">
         {tab === "members" && <MembersManager />}
-        {tab === "payments" && <PaymentsManager />}
+        {tab === "payments" && <PaymentsManager isSuperAdmin={isSuperAdmin} />}
         {tab === "import" && <StatementImport />}
         {tab === "reminders" && <Reminders />}
         {tab === "health" && <HealthPanel />}

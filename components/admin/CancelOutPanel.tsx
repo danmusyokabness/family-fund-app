@@ -1,9 +1,10 @@
 "use client";
 // components/admin/CancelOutPanel.tsx
 //
-// "Cancel out": remove a withdrawal and the deposit(s) that put the money
-// back, in one step, without changing the Total in account. Only enabled
-// when the two sides are exactly equal. Main admin login only.
+// "Cancel out": erase a withdrawal, the deposit(s) that put the money back and
+// the M-PESA fee charged on them, in one step, without changing the Total in
+// account. Only enabled when the money adds up (a few cents of rounding are
+// kept as one plain line). Shown to the main admin login only.
 
 import { useCallback, useState } from "react";
 import { checkCancelOut } from "@/lib/cancel-out";
@@ -15,6 +16,8 @@ interface Entry {
   date: string;
   label: string;
   purpose?: string;
+  /** The M-PESA fee charged on this deposit, in KES. */
+  fee?: number;
 }
 
 function money(n: number): string {
@@ -63,12 +66,13 @@ export default function CancelOutPanel({ onDone }: { onDone: () => void }) {
   const back = picked.deposits.reduce((n, d) => n + d.amount, 0);
   const check = checkCancelOut(
     picked.expenses.map((e) => ({ id: e.id, kind: e.kind, amount: e.amount })),
-    picked.deposits.map((d) => ({ id: d.id, kind: d.kind, amount: d.amount, creditedToMonthlyDues: false }))
+    picked.deposits.map((d) => ({ id: d.id, kind: d.kind, amount: d.amount, fee: d.fee ?? 0, creditedToMonthlyDues: false }))
   );
+  const fees = picked.deposits.reduce((n, d) => n + (d.fee ?? 0), 0);
 
   async function submit() {
     if (!check.ok) return;
-    if (!window.confirm(`Remove ${picked.expenses.length} withdrawal(s) and ${picked.deposits.length} deposit(s), each side KES ${money(out)}? The Total in account will not change.`)) return;
+    if (!window.confirm(`Erase ${picked.expenses.length} withdrawal(s), ${picked.deposits.length} deposit(s) and their fees for good? The Total in account will not change. This cannot be undone.`)) return;
     setBusy(true);
     setError(null);
     setMessage(null);
@@ -80,10 +84,7 @@ export default function CancelOutPanel({ onDone }: { onDone: () => void }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Could not cancel them out.");
-      setMessage(
-        `Removed ${data.removedExpenses} withdrawal(s) and ${data.removedPayments} deposit(s), KES ${money(data.totalKes)} each side. The Total in account did not change.` +
-          (data.fromStatement ? " Some of these came from an imported statement: if you import that statement again, they will come back, so leave it or import both statements together." : "")
-      );
+      setMessage(`Erased ${data.removedExpenses} withdrawal(s), ${data.removedPayments} deposit(s) and ${data.removedFees} fee(s). The Total in account did not change.`);
       await load();
       onDone();
     } catch (err) {
@@ -102,8 +103,9 @@ export default function CancelOutPanel({ onDone }: { onDone: () => void }) {
     >
       <summary className="cursor-pointer font-medium">Cancel out a withdrawal and the deposit that put it back</summary>
       <p className="mt-2 text-xs text-ink-soft">
-        If money was taken out and later put back, remove both entries here. The two sides must add up to exactly the same amount, so the Total in account stays the
-        same. A record of what was removed is kept. M-PESA transaction charges and deposits that pay off a member&apos;s monthly dues are not offered.
+        If money was taken out and later put back, erase the withdrawal, the deposit and the M-PESA fee charged on that deposit here. The deposit, less its fee, must
+        equal the withdrawal, so the Total in account stays the same. A few cents of difference (deposits are whole shillings, fees are not) stay in the fund as one
+        line called Rounding. Nothing is kept about what was erased. Deposits that pay off a member&apos;s monthly dues are not offered.
       </p>
 
       {error && <p className="mt-2 text-sm text-danger">{error}</p>}
@@ -137,7 +139,10 @@ export default function CancelOutPanel({ onDone }: { onDone: () => void }) {
                   <input type="checkbox" className="mt-0.5" checked={chosenDeposits.has(d.id)} onChange={() => toggle(chosenDeposits, setChosenDeposits, d.id)} />
                   <span className="flex-1">
                     {d.label}
-                    <span className="block text-ink-soft">{day(d.date)}</span>
+                    <span className="block text-ink-soft">
+                      {day(d.date)}
+                      {(d.fee ?? 0) > 0 && <> &middot; fee {money(d.fee ?? 0)}</>}
+                    </span>
                   </span>
                   <span className="figures" style={{ color: "var(--forest)" }}>+{money(d.amount)}</span>
                 </label>
@@ -150,10 +155,12 @@ export default function CancelOutPanel({ onDone }: { onDone: () => void }) {
       {expenses !== null && (
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <button type="button" onClick={submit} disabled={busy || !check.ok} className="btn-primary px-4 py-1.5 text-sm">
-            {busy ? "Removing..." : "Remove them both"}
+            {busy ? "Erasing..." : "Erase them"}
           </button>
           <span className="text-xs text-ink-soft">
             Withdrawals KES {money(out)} &middot; Deposits KES {money(back)}
+            {fees > 0 && <> &middot; Fees KES {money(fees)}</>}
+            {check.ok && check.leftoverCents > 0 && <span className="block">KES {money(check.leftoverCents / 100)} stays in the fund as Rounding.</span>}
             {picked.expenses.length > 0 && picked.deposits.length > 0 && !check.ok && <span className="block" style={{ color: "var(--ochre)" }}>{check.error}</span>}
           </span>
         </div>

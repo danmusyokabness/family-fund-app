@@ -62,7 +62,7 @@ function formatDate(iso: string): string {
 
 const inputCls = "rounded-md px-2.5 py-1.5 text-sm";
 
-export default function PaymentsManager() {
+export default function PaymentsManager({ isSuperAdmin = false }: { isSuperAdmin?: boolean }) {
   const [members, setMembers] = useState<MemberOption[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [statusFilter, setStatusFilter] = useState("");
@@ -488,12 +488,14 @@ export default function PaymentsManager() {
         </div>
       </div>
 
-      <CancelOutPanel
-        onDone={() => {
-          loadPayments(statusFilter);
-          loadExpenses();
-        }}
-      />
+      {isSuperAdmin && (
+        <CancelOutPanel
+          onDone={() => {
+            loadPayments(statusFilter);
+            loadExpenses();
+          }}
+        />
+      )}
     </div>
   );
 }

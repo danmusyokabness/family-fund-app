@@ -162,10 +162,28 @@ test("compatibility: no regular expression uses a flag or feature newer than the
   assert.deepEqual(offenders, [], "use [\\s\\S] instead of the s flag, and avoid look-behind or named groups");
 });
 
-test("security: cancelling out money records is the main admin only, checked for equal totals, and leaves a record of what was removed", () => {
+test("security: cancelling out money records is the main admin only, checked for money that adds up, and leaves no record of what was removed", () => {
   const route = read("app/api/admin/cancel-out/route.ts");
   assert.ok(route.includes("requireSuperAdmin"), "deleting money records must be superadmin only");
-  assert.ok(route.includes("checkCancelOut"), "the totals must be checked for equality on the server");
-  assert.ok(route.includes('job: "cancel_out"'), "what was removed must be kept in job_runs");
+  assert.ok(route.includes("checkCancelOut"), "the money must be checked on the server");
+  assert.ok(!route.includes("job_runs"), "what was erased must not be written to any log");
+  assert.ok(!route.includes('"cancel_out"'), "no cancel_out audit record may be written");
+  assert.ok(route.includes("import_skip_receipts"), "erased receipt numbers must be remembered so an old statement cannot bring them back");
   assert.ok(!route.includes("requireAdmin()"), "a member-admin must not be able to delete money records");
+});
+
+test("privacy: the list of erased receipts is never exported, and the cancel-out tool is only shown to the main admin", () => {
+  const exportRoute = read("app/api/admin/export/route.ts");
+  assert.ok(!exportRoute.includes("import_skip_receipts"), "the backup must not contain the erased receipt list");
+  const page = read("app/admin/page.tsx");
+  assert.ok(page.includes("getSuperAdminSession"), "the admin page must know whether this is the main admin");
+  const payments = read("components/admin/PaymentsManager.tsx");
+  assert.ok(/isSuperAdmin\s*&&\s*\(\s*<CancelOutPanel/.test(payments), "the cancel-out panel must be rendered only for the main admin");
+  const panel = read("components/admin/CancelOutPanel.tsx");
+  assert.ok(!/record of what was removed is kept/i.test(panel), "the panel must not claim that a record is kept");
+});
+
+test("statement import: receipts that were erased on purpose are treated as already recorded, never brought back", () => {
+  const route = read("app/api/admin/statements/import/route.ts");
+  assert.ok(route.includes("import_skip_receipts") && route.includes("erasedReceipts.has(row.receiptNo)"));
 });

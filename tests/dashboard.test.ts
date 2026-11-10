@@ -501,15 +501,39 @@ test("a stray payment is described as other income, in plain words", () => {
 });
 
 // ---------------------------------------------------------------------
-// Cancel out: remove a withdrawal and the deposit that put it back
+// Cancel out: erase a withdrawal, the deposit that put it back and the fee on that deposit
 // ---------------------------------------------------------------------
 import { checkCancelOut, toCents } from "../lib/cancel-out.ts";
 
 const wd = (id: string, amount: number, kind = "withdrawal") => ({ id, kind, amount });
-const dep = (id: string, amount: number, extra: Partial<{ kind: string; creditedToMonthlyDues: boolean }> = {}) => ({ id, kind: "manual", amount, creditedToMonthlyDues: false, ...extra });
+const dep = (id: string, amount: number, extra: Partial<{ kind: string; creditedToMonthlyDues: boolean; fee: number }> = {}) => ({ id, kind: "manual", amount, creditedToMonthlyDues: false, ...extra });
 
-test("cancel out: a withdrawal and the deposit that put it back, equal amounts, is allowed", () => {
-  assert.deepEqual(checkCancelOut([wd("w", 10000)], [dep("d", 10000)]), { ok: true, totalCents: 1000000 });
+test("cancel out: a withdrawal and the deposit that put it back, equal amounts, no fee, is allowed with nothing left over", () => {
+  assert.deepEqual(checkCancelOut([wd("w", 10000)], [dep("d", 10000)]), { ok: true, totalCents: 1000000, feeCents: 0, leftoverCents: 0 });
+});
+
+test("cancel out: the fee charged on the deposit is part of the sum (deposit minus fee equals withdrawal)", () => {
+  // a deposit of 1,010 with a fee of 10 leaves exactly the 1,000 that was taken out
+  assert.deepEqual(checkCancelOut([wd("w", 1000)], [dep("d", 1010, { fee: 10 })]), { ok: true, totalCents: 100000, feeCents: 1000, leftoverCents: 0 });
+  // a deposit that only equals the withdrawal cannot also pay the fee: refused, and the message names the shortfall
+  const short = checkCancelOut([wd("w", 1000)], [dep("d", 1000, { fee: 5.5 })]);
+  assert.equal(short.ok, false);
+  if (!short.ok) assert.ok(short.error.includes("KES 5.50 short"), short.error);
+});
+
+test("cancel out: fees with cents and whole-shilling deposits leave a few cents, which are kept as rounding and never lost", () => {
+  // withdrawal 100, deposit 101, fee 0.55 -> 100.45 reaches the fund: 0.45 is rounding
+  const result = checkCancelOut([wd("w", 100)], [dep("d", 101, { fee: 0.55 })]);
+  assert.deepEqual(result, { ok: true, totalCents: 10000, feeCents: 55, leftoverCents: 45 });
+  // the books after: withdrawal gone (+100), deposit gone (-101), fee gone (+0.55), rounding line added (+0.45) -> unchanged
+  assert.equal(toCents(100) - toCents(101) + toCents(0.55) + 45, 0);
+});
+
+test("cancel out: a leftover of KES 1 or more per deposit is too much to be rounding and is refused", () => {
+  const result = checkCancelOut([wd("w", 100)], [dep("d", 102, { fee: 0.55 })]);
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.ok(result.error.includes("too much to be rounding"), result.error);
+  assert.equal(checkCancelOut([wd("w", 100)], [dep("a", 60, { fee: 0.3 }), dep("b", 41.2, { fee: 0.2 })]).ok, true); // two deposits may each carry up to KES 1
 });
 
 test("cancel out: one withdrawal put back in several deposits is allowed when they add up exactly (cents are exact)", () => {
@@ -518,18 +542,19 @@ test("cancel out: one withdrawal put back in several deposits is allowed when th
   assert.equal(toCents(0.1) + toCents(0.2), toCents(0.3));
 });
 
-test("cancel out: unequal sides are refused, and the message says by how much (so the total in account cannot move)", () => {
+test("cancel out: money that does not add up is refused, and the message says by how much (so the total in account cannot move)", () => {
   const result = checkCancelOut([wd("w", 10000)], [dep("d", 9000)]);
   assert.equal(result.ok, false);
   if (!result.ok) {
-    assert.ok(result.error.includes("KES 10,000") && result.error.includes("KES 9,000"));
-    assert.ok(result.error.includes("KES 1,000 more"));
+    assert.ok(result.error.includes("KES 10,000") && result.error.includes("KES 9,000"), result.error);
+    assert.ok(result.error.includes("KES 1,000 short"), result.error);
   }
-  assert.equal(checkCancelOut([wd("w", 5000)], [dep("d", 6000)]).ok, false);
 });
 
-test("cancel out: M-PESA charges, opening balances, adjustments and member-credited monthly deposits can never be cancelled", () => {
-  assert.equal(checkCancelOut([wd("c", 4.95, "charge")], [dep("d", 4.95)]).ok, false);
+test("cancel out: a fee can never be chosen on its own, and opening balances, adjustments and member-credited monthly deposits can never be cancelled", () => {
+  const onlyFee = checkCancelOut([wd("c", 4.95, "charge")], [dep("d", 4.95)]);
+  assert.equal(onlyFee.ok, false);
+  if (!onlyFee.ok) assert.ok(onlyFee.error.includes("together with the deposit"));
   assert.equal(checkCancelOut([wd("w", 100, "mystery")], [dep("d", 100)]).ok, false);
   assert.equal(checkCancelOut([wd("w", 100)], [dep("d", 100, { kind: "opening" })]).ok, false);
   assert.equal(checkCancelOut([wd("w", 100)], [dep("d", 100, { kind: "adjustment" })]).ok, false);
@@ -560,3 +585,21 @@ test("cancel out: removing the pair leaves the Total in account and every figure
   const dashboardWithout = buildDashboard(input({ members: [oldMember], payments: base.map((p) => ({ amount: p.amount, kind: p.kind as "mpesa", paidAt: p.paidAt, matchStatus: p.matchStatus as "matched" })), expensesTotal: 0 }));
   assert.equal(dashboardWith.group.fundTotal, dashboardWithout.group.fundTotal);
 });
+
+test("cancel out: erasing withdrawal, deposit and fee and adding the rounding line leaves the full ledger balance exactly as it was, with no label left behind", () => {
+  const base = [pay("m1", 16000, "2026-09-03T08:00:00Z")];
+  // before: withdrawal 100, a deposit of 101 that put it back, and the 0.55 fee on that deposit
+  const before = {
+    payments: [...base, pay("back", 101, "2026-09-20T08:00:00Z", { kind: "manual", purpose: "recovery", memberNames: ["Ann One"], relatedExpenseId: "w1" })],
+    expenses: [exp("w1", "withdrawal", 100, "2026-09-10T08:00:00Z", "Emergency"), exp("fee1", "charge", 0.55, "2026-09-20T08:00:00Z", "Pay Bill Charge")],
+  };
+  // after: all three erased, one plain rounding line of 0.45
+  const after = {
+    payments: [...base, pay("round", 0.45, "2026-09-20T08:00:00Z", { kind: "manual", purpose: "other", matchStatus: "ignored", note: "Rounding" })],
+    expenses: [] as FullLedgerExpense[],
+  };
+  assert.equal(buildFullLedger(before).balance, buildFullLedger(after).balance);
+  const lines = JSON.stringify(buildFullLedger(after));
+  assert.ok(!lines.includes("Emergency") && !lines.includes("Pay Bill Charge") && !lines.includes("Ann One"), "nothing about the erased entries may remain");
+});
+
