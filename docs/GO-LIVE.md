@@ -169,6 +169,8 @@ Leave the sender ID setting empty. Then **Redeploy** (Step 3d, parts 1 and 2).
 
 If you forget to import, the automatic text **waits** instead of reminding people who have already paid. It goes out on the next daily run after you import, as long as that is within two days of its day.
 
+If money was taken out and then put back, you can remove both entries at once on the **Payments** tab, under **Cancel out a withdrawal and the deposit that put it back**: tick the withdrawal and the deposit(s) that replaced it. The two sides must be exactly equal, so the Total in account does not change, and a record of what was removed is kept. Only the main admin login can do this.
+
 Record bank withdrawals and other expenses (not M-PESA charges, which come in with the statement) on the **Payments** tab under Fund expenses, so the full ledger and "Total in account" stay correct.
 
 ---

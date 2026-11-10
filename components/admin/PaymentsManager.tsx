@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { PAYMENT_PURPOSES, PURPOSE_LABEL, PURPOSE_SHORT, type PaymentPurpose } from "@/lib/payment-purpose";
+import CancelOutPanel from "./CancelOutPanel";
 
 interface MemberOption {
   id: string;
@@ -486,6 +487,13 @@ export default function PaymentsManager() {
           ))}
         </div>
       </div>
+
+      <CancelOutPanel
+        onDone={() => {
+          loadPayments(statusFilter);
+          loadExpenses();
+        }}
+      />
     </div>
   );
 }

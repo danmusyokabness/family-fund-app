@@ -251,7 +251,9 @@ function isRealDate(value: string): boolean {
 export function sanitizeNodePatch(input: Record<string, unknown>, today: string): PatchResult {
   const errors: string[] = [];
   const patch: NodePatch = {};
-  const has = (key: string) => Object.prototype.hasOwnProperty.call(input, key);
+  // A field counts as "sent" only if it has a value. (A form that leaves a field undefined has not sent it: this was
+  // the cause of "Spouse name must be text" appearing when someone first joined the tree.)
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(input, key) && input[key] !== undefined;
 
   const textField = (key: keyof NodePatch, max: number, label: string) => {
     if (!has(key)) return;

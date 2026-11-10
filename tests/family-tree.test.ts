@@ -318,3 +318,44 @@ test("fit to screen: a wide tree shrinks to the width, a tall one to the height,
   assert.equal(fitZoom({ width: 0, height: 0 }, room), 1); // nothing measured yet
   assert.equal(fitZoom({ width: 500, height: 500 }, { width: 0, height: 0 }), 1);
 });
+
+import { sanitizeEducation, sanitizeWork, sanitizeResidence, describeEducation, describeWork, describeResidence } from "../lib/profile.ts";
+import { regionsFor, KENYA_COUNTIES, COUNTRIES, DEFAULT_COUNTRY } from "../lib/data/places.ts";
+
+test("regression: fields a form did not send are treated as not sent (this caused 'Spouse name must be text' when joining the tree)", () => {
+  const result = sanitizeNodePatch({ dateOfBirth: "1990-05-05", workEducation: undefined, bio: undefined, spouseName: undefined }, "2026-10-21");
+  assert.deepEqual(result, { ok: true, patch: { dateOfBirth: "1990-05-05" } });
+});
+
+test("profile: education entries are checked (level from the list, an institution, optional months, 'current' clears the end)", () => {
+  const ok = sanitizeEducation([{ level: "Bachelor's degree", institution: "  University of Nairobi ", course: "BSc Computer Science", startMonth: "2014-09", endMonth: "2018-12" }], "2026-10");
+  assert.deepEqual(ok, { ok: true, value: [{ level: "Bachelor's degree", institution: "University of Nairobi", course: "BSc Computer Science", startMonth: "2014-09", endMonth: "2018-12", current: false }] });
+  const now = sanitizeEducation([{ level: "Diploma", institution: "KMTC", startMonth: "2025-09", endMonth: "2027-01", current: true }], "2026-10");
+  assert.deepEqual(now.ok && now.value[0].endMonth, null);
+  assert.equal(sanitizeEducation([{ level: "Wizard school", institution: "X" }], "2026-10").ok, false);
+  assert.equal(sanitizeEducation([{ level: "Diploma", institution: "" }], "2026-10").ok, false);
+  assert.equal(sanitizeEducation([{ level: "Diploma", institution: "X", startMonth: "2018-12", endMonth: "2018-01" }], "2026-10").ok, false);
+  assert.equal(sanitizeEducation([{ level: "Diploma", institution: "X", startMonth: "2018-13" }], "2026-10").ok, false);
+  assert.equal(sanitizeEducation(Array.from({ length: 9 }, () => ({ level: "Diploma", institution: "X" })), "2026-10").ok, false);
+});
+
+test("profile: work entries and residence are checked, and read as plain lines", () => {
+  assert.equal(sanitizeWork([{ status: "Astronaut" }], "2026-10").ok, false);
+  assert.equal(sanitizeWork([{ status: "Not working yet" }], "2026-10").ok, true);
+  assert.deepEqual(sanitizeResidence({ country: "Kenya", region: "Nairobi", place: " Kasarani " }), { ok: true, value: { country: "Kenya", region: "Nairobi", place: "Kasarani" } });
+  assert.deepEqual(sanitizeResidence({ country: "", region: "", place: "" }), { ok: true, value: null });
+  assert.equal(sanitizeResidence({ region: "Nairobi" }).ok, false);
+  assert.equal(describeEducation({ level: "Bachelor's degree", institution: "University of Nairobi", course: "BSc Computer Science", startMonth: "2014-09", endMonth: "2018-12", current: false }), "Bachelor's degree, BSc Computer Science at University of Nairobi (Sep 2014 to Dec 2018)");
+  assert.equal(describeWork({ status: "Employed", employer: "Kenya Power", title: "Engineer", sector: "Energy and mining", startMonth: "2020-02", endMonth: null, current: true }), "Engineer at Kenya Power (Employed, Energy and mining), Feb 2020 to now");
+  assert.equal(describeResidence({ country: "Kenya", region: "Nairobi", place: "Kasarani" }), "Kasarani, Nairobi, Kenya");
+});
+
+test("the option lists: Kenya is the default country with its 47 counties; other countries have no preset regions", () => {
+  assert.equal(DEFAULT_COUNTRY, "Kenya");
+  assert.equal(COUNTRIES[0], "Kenya");
+  assert.equal(new Set(COUNTRIES).size, COUNTRIES.length);
+  assert.equal(KENYA_COUNTIES.length, 47);
+  assert.equal(new Set(KENYA_COUNTIES).size, 47);
+  assert.deepEqual(regionsFor("kenya"), KENYA_COUNTIES);
+  assert.deepEqual(regionsFor("Canada"), []);
+});

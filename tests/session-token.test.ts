@@ -161,3 +161,11 @@ test("compatibility: no regular expression uses a flag or feature newer than the
   }
   assert.deepEqual(offenders, [], "use [\\s\\S] instead of the s flag, and avoid look-behind or named groups");
 });
+
+test("security: cancelling out money records is the main admin only, checked for equal totals, and leaves a record of what was removed", () => {
+  const route = read("app/api/admin/cancel-out/route.ts");
+  assert.ok(route.includes("requireSuperAdmin"), "deleting money records must be superadmin only");
+  assert.ok(route.includes("checkCancelOut"), "the totals must be checked for equality on the server");
+  assert.ok(route.includes('job: "cancel_out"'), "what was removed must be kept in job_runs");
+  assert.ok(!route.includes("requireAdmin()"), "a member-admin must not be able to delete money records");
+});

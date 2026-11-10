@@ -499,3 +499,64 @@ test("a stray payment is described as other income, in plain words", () => {
   assert.equal(entry.label, "Other income");
   assert.equal(entry.detail, "Stray payment, credited to no member");
 });
+
+// ---------------------------------------------------------------------
+// Cancel out: remove a withdrawal and the deposit that put it back
+// ---------------------------------------------------------------------
+import { checkCancelOut, toCents } from "../lib/cancel-out.ts";
+
+const wd = (id: string, amount: number, kind = "withdrawal") => ({ id, kind, amount });
+const dep = (id: string, amount: number, extra: Partial<{ kind: string; creditedToMonthlyDues: boolean }> = {}) => ({ id, kind: "manual", amount, creditedToMonthlyDues: false, ...extra });
+
+test("cancel out: a withdrawal and the deposit that put it back, equal amounts, is allowed", () => {
+  assert.deepEqual(checkCancelOut([wd("w", 10000)], [dep("d", 10000)]), { ok: true, totalCents: 1000000 });
+});
+
+test("cancel out: one withdrawal put back in several deposits is allowed when they add up exactly (cents are exact)", () => {
+  assert.equal(checkCancelOut([wd("w", 10000)], [dep("a", 6000), dep("b", 4000)]).ok, true);
+  assert.equal(checkCancelOut([wd("w1", 0.1), wd("w2", 0.2)], [dep("d", 0.3)]).ok, true); // 0.1 + 0.2 is not 0.3 in plain arithmetic
+  assert.equal(toCents(0.1) + toCents(0.2), toCents(0.3));
+});
+
+test("cancel out: unequal sides are refused, and the message says by how much (so the total in account cannot move)", () => {
+  const result = checkCancelOut([wd("w", 10000)], [dep("d", 9000)]);
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.ok(result.error.includes("KES 10,000") && result.error.includes("KES 9,000"));
+    assert.ok(result.error.includes("KES 1,000 more"));
+  }
+  assert.equal(checkCancelOut([wd("w", 5000)], [dep("d", 6000)]).ok, false);
+});
+
+test("cancel out: M-PESA charges, opening balances, adjustments and member-credited monthly deposits can never be cancelled", () => {
+  assert.equal(checkCancelOut([wd("c", 4.95, "charge")], [dep("d", 4.95)]).ok, false);
+  assert.equal(checkCancelOut([wd("w", 100, "mystery")], [dep("d", 100)]).ok, false);
+  assert.equal(checkCancelOut([wd("w", 100)], [dep("d", 100, { kind: "opening" })]).ok, false);
+  assert.equal(checkCancelOut([wd("w", 100)], [dep("d", 100, { kind: "adjustment" })]).ok, false);
+  const credited = checkCancelOut([wd("w", 300)], [dep("d", 300, { creditedToMonthlyDues: true })]);
+  assert.equal(credited.ok, false);
+  if (!credited.ok) assert.ok(credited.error.includes("monthly dues"));
+  assert.equal(checkCancelOut([wd("w", 100, "other")], [dep("d", 100)]).ok, true); // an "other" expense may be cancelled
+});
+
+test("cancel out: both sides are needed, with no repeats and no zero amounts", () => {
+  assert.equal(checkCancelOut([], [dep("d", 100)]).ok, false);
+  assert.equal(checkCancelOut([wd("w", 100)], []).ok, false);
+  assert.equal(checkCancelOut([wd("w", 100), wd("w", 100)], [dep("a", 100), dep("b", 100)]).ok, false); // the same withdrawal twice
+  assert.equal(checkCancelOut([wd("w", 0)], [dep("d", 0)]).ok, false);
+  assert.equal(checkCancelOut(Array.from({ length: 21 }, (_, i) => wd(`w${i}`, 1)), [dep("d", 21)]).ok, false); // too many at once
+});
+
+test("cancel out: removing the pair leaves the Total in account and every figure derived from it exactly as it was", () => {
+  const base = [pay("m1", 16000, "2026-09-03T08:00:00Z")];
+  const withPair = {
+    payments: [...base, pay("back", 5000, "2026-09-20T08:00:00Z", { kind: "manual", purpose: "recovery", memberNames: ["Ann One"], relatedExpenseId: "w1" })],
+    expenses: [exp("w1", "withdrawal", 5000, "2026-09-10T08:00:00Z", "Emergency")],
+  };
+  const withoutPair = { payments: base, expenses: [] as FullLedgerExpense[] };
+  assert.equal(buildFullLedger(withPair).balance, 16000);
+  assert.equal(buildFullLedger(withoutPair).balance, 16000);
+  const dashboardWith = buildDashboard(input({ members: [oldMember], payments: withPair.payments.map((p) => ({ amount: p.amount, kind: p.kind as "mpesa", paidAt: p.paidAt, matchStatus: p.matchStatus as "matched" })), expensesTotal: 5000 }));
+  const dashboardWithout = buildDashboard(input({ members: [oldMember], payments: base.map((p) => ({ amount: p.amount, kind: p.kind as "mpesa", paidAt: p.paidAt, matchStatus: p.matchStatus as "matched" })), expensesTotal: 0 }));
+  assert.equal(dashboardWith.group.fundTotal, dashboardWithout.group.fundTotal);
+});
