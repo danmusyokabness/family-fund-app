@@ -1,36 +1,30 @@
 // lib/messaging.ts
 //
-// SERVER-ONLY. Plans and sends the two scheduled texts, using the same
-// code whether it is the daily cron job or the admin pressing a button:
+// SERVER-ONLY. Works out the two monthly messages and who each one is for:
 //
-//   * "reminder": the 7th-of-the-month arrears reminder
-//   * "report":   the 15th-of-the-month fund report
+//   * "reminder": the arrears reminder (default: the 7th of the month)
+//   * "report":   the fund report (default: the 15th of the month)
 //
-// planMessages() only LOOKS: it works out who would get what, and sends
-// nothing. sendMessages() plans again from scratch (it never trusts text
-// sent from the browser), then sends what is "ready" and records every
-// attempt in sms_log. One real text per member per kind per month is
-// also enforced by a unique index in the database.
+// planMessages() only LOOKS: it works out who would get what, with the exact
+// wording, and sends nothing. The admin sends each one by hand from the
+// Reminders tab (a WhatsApp link per member). The app has no text-message
+// provider: Africa's Talking was removed on 11 Nov 2026.
 //
-// Safety rules:
-//   * With SMS_LIVE off, "sending" only records a dry run.
-//   * A member who already received this month's text is never texted again.
+// Rules the plan follows:
+//   * A member who already has a "sent" record this month (old records from
+//     before the removal) is not offered it again.
 //   * A member with a payment waiting for the admin's confirmation is NOT
-//     sent a reminder (their balance may be wrong). They are listed instead.
+//     offered a reminder (their balance may be wrong). They are listed instead.
 //     They DO get the report, with a "being confirmed" note.
 //   * A member with no phone is listed, never guessed at.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { serverEnv } from "./env.ts";
 import { nairobiCurrentMonthKey, nairobiTodayDateString } from "./dates.ts";
 import { mergeSettingsWithDefaults } from "./settings.ts";
 import { buildReminderCandidates, composeReminderMessage } from "./reminders.ts";
 import { buildReportMessages, smsSegments } from "./report.ts";
 import { buildDashboard } from "./dashboard.ts";
 import { fetchAllRows } from "./pagination.ts";
-import { sendSms } from "./sms.ts";
-import { buildAdminAlert } from "./admin-alerts.ts";
-import { normalizePhone } from "./phone.ts";
 import { countsTowardMonthlyDues } from "./payment-purpose.ts";
 
 export type MessageKind = "reminder" | "report";
@@ -53,7 +47,7 @@ export interface DataFreshness {
   ageDays: number | null;
   /** The limit from Setup; 0 means "never hold". */
   maxAgeDays: number;
-  /** True when an AUTOMATIC text should wait for fresher data. */
+  /** True when the payment data is old enough that the admin should import a newer statement before sending. */
   stale: boolean;
 }
 
@@ -63,9 +57,6 @@ export interface MessagePlan {
   today: string; // "YYYY-MM-DD" (Nairobi)
   scheduledDay: number;
   template: string;
-  /** True only when SMS_LIVE=true AND the Africa's Talking details are present. */
-  live: boolean;
-  liveNote: string;
   messages: PlannedMessage[];
   counts: Record<PlanStatus, number>;
   totalSegments: number;
@@ -77,17 +68,6 @@ interface MemberRow {
   full_name: string;
   joined_on: string;
   member_phones: { phone_number: string; is_primary: boolean }[] | null;
-}
-
-function liveStatus(): { live: boolean; liveNote: string } {
-  const env = serverEnv();
-  if (!env.smsLive) {
-    return { live: false, liveNote: "Live sending is OFF (SMS_LIVE is not true). Sending only records a dry run; no real text leaves." };
-  }
-  if (!env.atApiKey || !env.atUsername) {
-    return { live: false, liveNote: "SMS_LIVE is on but the Africa's Talking key or username is missing, so sending will fail." };
-  }
-  return { live: true, liveNote: "Live sending is ON. Real texts will be sent and charged to your Africa's Talking balance." };
 }
 
 export async function loadSettings(db: SupabaseClient): Promise<Record<string, string>> {
@@ -234,169 +214,9 @@ export async function planMessages(db: SupabaseClient, kind: MessageKind, settin
     today,
     scheduledDay: Number(kind === "reminder" ? settings.reminder_day : settings.report_day) || (kind === "reminder" ? 7 : 15),
     template: kind === "reminder" ? settings.reminder_message_template : settings.report_message_template,
-    ...liveStatus(),
     messages,
     counts,
     totalSegments: messages.filter((m) => m.status === "ready").reduce((n, m) => n + m.segments, 0),
     dataFreshness: await loadDataFreshness(db, today, settings),
   };
-}
-
-export interface SendSummary {
-  kind: MessageKind;
-  period: string;
-  attempted: number;
-  sent: number; // real texts, or dry runs when live sending is off
-  dryRun: boolean;
-  failed: number;
-  failures: { fullName: string; error: string }[];
-  /** Set when an automatic send was held back, with the reason. Nothing was sent. */
-  held?: string;
-}
-
-/**
- * Sends everything that is "ready" (optionally only for the given members).
- * Plans again from scratch so the text always comes from the server.
- */
-export async function sendMessages(
-  db: SupabaseClient,
-  kind: MessageKind,
-  options: { memberIds?: string[]; settings?: Record<string, string>; automatic?: boolean } = {}
-): Promise<SendSummary> {
-  const plan = await planMessages(db, kind, options.settings);
-
-  // An AUTOMATIC send waits when the payment data is too old: texts built on
-  // old data would remind people who have already paid. A send the admin
-  // starts by hand is never held (the screen shows the same warning).
-  if (options.automatic && plan.dataFreshness.stale) {
-    const f = plan.dataFreshness;
-    const held =
-      f.ageDays === null
-        ? "No statement has ever been imported, so the automatic text was held back."
-        : `The last statement import was ${f.ageDays} day(s) ago (limit ${f.maxAgeDays}), so the automatic text was held back. Import the latest statement and it will go out on the next daily run.`;
-    return { kind, period: plan.period, attempted: 0, sent: 0, dryRun: !plan.live, failed: 0, failures: [], held };
-  }
-
-  const chosen = options.memberIds ? new Set(options.memberIds) : null;
-  const toSend = plan.messages.filter((m) => m.status === "ready" && m.phone && (!chosen || chosen.has(m.memberId)));
-
-  let sent = 0;
-  let failed = 0;
-  let dryRun = !plan.live;
-  const failures: { fullName: string; error: string }[] = [];
-
-  for (const m of toSend) {
-    const result = await sendSms(m.phone as string, m.message);
-    const status = result.ok ? (result.dryRun ? "dry_run" : "sent") : "failed";
-    if (result.ok && !result.dryRun) dryRun = false;
-
-    const { error: logError } = await db.from("sms_log").insert({
-      kind,
-      period: plan.period,
-      member_id: m.memberId,
-      to_phone: m.phone,
-      message: m.message,
-      status,
-      error: result.error ?? null,
-      provider_response: result.providerResponse ? JSON.stringify(result.providerResponse) : null,
-    });
-
-    if (status === "failed") {
-      failed++;
-      failures.push({ fullName: m.fullName, error: result.error ?? "The text could not be sent." });
-    } else if (logError && status === "sent") {
-      // The text WENT but could not be recorded: say so loudly, as a retry could text them twice.
-      sent++;
-      failures.push({ fullName: m.fullName, error: `Sent, but could not be recorded in the log (${logError.message}). Do not send again to this member.` });
-    } else {
-      sent++;
-    }
-  }
-
-  return { kind, period: plan.period, attempted: toSend.length, sent, dryRun, failed, failures };
-}
-
-/**
- * Everyone who should be told to import the statement: the phone number
- * saved in Setup, plus the primary phone of every active member who is an
- * admin. Each number appears once, in canonical form.
- */
-export async function adminAlertPhones(db: SupabaseClient, settings: Record<string, string>): Promise<string[]> {
-  const phones = new Set<string>();
-  const fromSetup = normalizePhone(settings.admin_alert_phone ?? "");
-  if (fromSetup) phones.add(fromSetup);
-
-  const { data } = await db
-    .from("members")
-    .select("member_phones(phone_number, is_primary)")
-    .eq("is_active", true)
-    .eq("is_admin", true)
-    .returns<{ member_phones: { phone_number: string; is_primary: boolean }[] | null }[]>();
-  for (const m of data ?? []) {
-    const primary = (m.member_phones ?? []).find((p) => p.is_primary)?.phone_number;
-    const canonical = primary ? normalizePhone(primary) : null;
-    if (canonical) phones.add(canonical);
-  }
-  return [...phones];
-}
-
-export interface AdminAlertResult {
-  message: string;
-  recipients: number;
-  /** True when nothing real was sent (live sending off). */
-  dryRun: boolean;
-  failed: number;
-}
-
-/** Sends the "import the statement" alert, if there is one to send. Never throws: an alert must not stop the daily job. */
-export async function sendAdminAlert(
-  db: SupabaseClient,
-  settings: Record<string, string>,
-  run: { dayOfMonth: number; reminders: SendSummary | null; report: SendSummary | null; freshness: DataFreshness }
-): Promise<AdminAlertResult | null> {
-  try {
-    const message = buildAdminAlert({
-      dayOfMonth: run.dayOfMonth,
-      reminderDay: Number(settings.reminder_day) || 7,
-      reportDay: Number(settings.report_day) || 15,
-      freshness: run.freshness,
-      held: { reminder: Boolean(run.reminders?.held), report: Boolean(run.report?.held) },
-      fundName: settings.fund_name,
-      siteUrl: settings.site_url,
-    });
-    if (!message) return null;
-
-    const phones = await adminAlertPhones(db, settings);
-    if (phones.length === 0) return null;
-
-    let failed = 0;
-    let dryRun = true;
-    for (const phone of phones) {
-      const result = await sendSms(phone, message);
-      if (!result.ok) failed++;
-      else if (!result.dryRun) dryRun = false;
-    }
-    return { message, recipients: phones.length, dryRun, failed };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Tells the admin(s) by text that a member has written to them privately,
- * so a message is not left unread. Best effort and never throws: it must not
- * make sending a message fail. While live sending is off it is only a dry run.
- */
-export async function notifyAdminsOfPrivateMessage(db: SupabaseClient, fromName: string): Promise<{ recipients: number } | null> {
-  try {
-    const settings = await loadSettings(db);
-    const phones = await adminAlertPhones(db, settings);
-    if (phones.length === 0) return null;
-    const site = settings.site_url ? ` ${settings.site_url.replace(/\/+$/, "")}/admin` : "";
-    const message = `${settings.fund_name}: ${fromName} sent you a private message on the family board. Open the Messages tab to read it.${site}`;
-    for (const phone of phones) await sendSms(phone, message);
-    return { recipients: phones.length };
-  } catch {
-    return null;
-  }
 }

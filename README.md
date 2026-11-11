@@ -1,4 +1,4 @@
-# Family Emergency Fund Platform: Handover README (v9.3, 11 Nov 2026)
+# Family Emergency Fund Platform: Handover README (v9.4, 11 Nov 2026)
 
 > **This file is the single source of truth for continuing the project with any AI agent or developer.** It describes the app, the owner, the rules, the exact state of the work, and what to do next. **The code is the truth for what is implemented; this file is the truth for intent, decisions and rules.** Verify this README against the real code before changing anything.
 
@@ -9,7 +9,7 @@
 1. Ask the owner to attach: **(a)** this README, **(b)** a fresh **zip of the project folder** (no `node_modules`, no `.next`, **never `.env.local`**), **(c)** a current **Supabase schema export** (the "CREATE TABLE" listing, as `.sql`), and **(d)** any screenshots or error text.
 2. Ask which **delivery zips and SQL files the owner has actually applied** (section 3.3 lists what exists and what is unconfirmed). Trust the zip they upload over any assumption.
 3. Say: *"Continue this project. Read the README first, then check it against the actual code and tell me what is left."* Then follow **section 14 (the next work)**.
-4. **Never ask the owner to paste a real secret** (Supabase service key, admin password, Africa's Talking key, session secrets). They live only in Vercel Environment Variables and the local `.env.local`.
+4. **Never ask the owner to paste a real secret** (Supabase service key, admin password, session secrets). They live only in Vercel Environment Variables and the local `.env.local`.
 5. The sandbox you work in probably **cannot** run `next build`, run SQL, or open a real PDF. The owner's `npm run build` and the Supabase SQL editor are the real tests (section 13).
 
 ---
@@ -24,7 +24,7 @@ A private web app for a **family emergency fund** that started **August 2026**:
 * The app should **run itself**: stay awake (Supabase free tier pauses after ~7 idle days), text arrears reminders on the 7th and a fund report on the 15th, warn the admin when payment data is stale, and keep the books reconciled with the M-PESA balance.
 * Payments reach the app by **uploading the M-PESA statement** (PDF with password, or CSV). Automatic intake is wanted but **Daraja was dropped by the owner** (section 14, item 9).
 
-Live at `https://family-fund-app-nine.vercel.app` (Vercel). GitHub: `github.com/danmusyokabness/family-fund-app` (private). Africa's Talking app username: `familyfundapp`.
+Live at `https://family-fund-app-nine.vercel.app` (Vercel). GitHub: `github.com/danmusyokabness/family-fund-app` (private).
 
 ---
 
@@ -58,7 +58,7 @@ Live at `https://family-fund-app-nine.vercel.app` (Vercel). GitHub: `github.com/
 | Statement import: **PDF (password typed in the box) and CSV**, balance integrity check, preview shows the member each payment would match | ✅ proven end to end on a real statement |
 | Member dashboard: balance cards, month-by-month ledger (monthly contributions only), **Other income and notes** section, "Show full ledger" link | ✅ |
 | **Full ledger** page (every movement, categories, running balance equals Total in account) | ✅ |
-| Texts: 7th reminder, 15th report, preview/confirm/send-now screen, automatic daily job, hold when data is stale, **admin alert to import the statement**, WhatsApp links | ✅ (live sending needs the owner's Africa's Talking key and `SMS_LIVE=true`; owner status unconfirmed) |
+| Reminders (7th) and fund report (15th): a list of who should get what, with the exact wording and a **WhatsApp** button (and Copy text) per member; the admin sends them by hand. **No text-message provider** (Africa's Talking removed in v9.4). The daily cron only keeps the database awake | ✅ v9.4 |
 | Health tab (daily job, data age, texting mode, waiting payments, members without a phone, backup age, "Total in account matches M-PESA", unread chat messages), backup + CSV exports (superadmin only) | ✅ |
 | Hardening: every route checks who is asking, locked data-reset, minimal public health page, security headers, `db/005` RLS lock, `docs/GO-LIVE.md` | ✅ |
 | **Family tree** drawn as a real tree: photo cards, parent-child lines, **fit to screen + zoom bar/buttons + scrollbars, colour per generation**, details panel, add/edit with privacy toggles, photo upload, "Where are you in the family?" first-visit step | ✅ delivered in v8.1/v8.2 |
@@ -78,14 +78,14 @@ Delivered in `cancel-out-17.zip` together with the cancel-out feature (they chan
 
 ### 3.3 What the owner has applied (UNCONFIRMED: ask)
 
-Delivered zips in order (each later one is cumulative over the earlier ones unless noted): `batch-1` (db 001-004, SMS fix, PDF reader, member ordering), `all-fixes-combined`, `reminders-6`, `ledger-and-messages-7`, `admin-complete-8`, `alerts-9`, `hardening-10`, `payment-purposes-11`, `other-income-12`, `tree-and-board-13`, `tree-chat-14`, `fix-photo-regex-15`, `tree-zoom-colour-16`, `fix-join-form-17`, `erase-cancelled-18`, `hanging-fee-19`. From a screenshot the owner has deployed **at least `tree-chat-14`**. SQL files `db/005`, `db/006`, `db/007` were requested, and **`db/008` (erase cancelled) is new in v9.2**; **confirm they ran** (compare the schema export with section 6). Also unconfirmed: secrets rotated (the very first zip contained `.env.local`), `git rm -r legacy` (confirmed done), Africa's Talking key and credit, `SMS_LIVE`.
+Delivered zips in order (each later one is cumulative over the earlier ones unless noted): `batch-1` (db 001-004, SMS fix, PDF reader, member ordering), `all-fixes-combined`, `reminders-6`, `ledger-and-messages-7`, `admin-complete-8`, `alerts-9`, `hardening-10`, `payment-purposes-11`, `other-income-12`, `tree-and-board-13`, `tree-chat-14`, `fix-photo-regex-15`, `tree-zoom-colour-16`, `fix-join-form-17`, `erase-cancelled-18`, `hanging-fee-19`, `no-sms-20`. From a screenshot the owner has deployed **at least `tree-chat-14`**. SQL files `db/005`, `db/006`, `db/007` were requested, and **`db/008` (erase cancelled) is new in v9.2**; **confirm they ran** (compare the schema export with section 6). Also unconfirmed: secrets rotated (the very first zip contained `.env.local`), `git rm -r legacy` (confirmed done). Vercel variables `AT_API_KEY`, `AT_USERNAME`, `AT_SENDER_ID`, `SMS_LIVE` should be deleted (nothing reads them now); and `npm uninstall africastalking` should be run once.
 
 ### 3.4 Owner decisions pending / open questions
 
 * **Parents:** the tree has ONE parent link per person (`parent_id`); the other parent is shown on the card as the "spouse" text. The owner said "parents" are mandatory. Ask whether one parent link is enough or both parents must be separate entries (that would need a second link).
 * **Payment text samples** for the free automatic intake (section 14, item 9). Still waiting.
 * **Old fee rows (11 Nov 2026):** before v9.2, cancel-out refused M-PESA charges, so the fee on a put-back deposit stayed on the books and members saw it as an unexplained charge. **Handled in v9.3** as a "hanging fee": the Cancel out tool lists it on the withdrawal side, to be erased with a deposit paid in to cover it (owner's case: deposit 105 against a fee of 93 leaves 12 as other income). A hanging fee with no covering deposit stays a real cost (erasing it would move the Total in account).
-* **Reminder texts failing (11 Nov 2026):** every send in the Reminders tab failed with "Request failed with status code 401" (Africa's Talking rejecting the login). Check `AT_API_KEY` (regenerate it), `AT_USERNAME` (`familyfundapp`, not `sandbox`), then redeploy; test with the owner's own number first. Failed sends can be sent again.
+* **Africa's Talking removed (11 Nov 2026):** the reminder texts failed with 401, then (after fixing the login) every number returned `UserInBlacklist` (406) on the shared route, and the fix was a paid sender ID, so the owner decided to remove it. Do not reintroduce a paid SMS provider without the owner. The free route is the WhatsApp button. Removed: `lib/sms.ts`, `lib/admin-alerts.ts`, `lib/africastalking.d.ts`, `/api/admin/sms-log`, `POST /api/admin/messages`, `sendMessages`, the SMS part of the daily cron, the admin alert and private-message texts, the Setup field `admin_alert_phone`, the Health SMS and import-alert lines, the env vars `AT_*` and `SMS_LIVE`. Kept: the `sms_log` table and its history (no longer written), the plan/preview, the stale-data warning.
 * Click-to-pay: the owner asked for an M-PESA prompt with a pre-filled amount. That is an STK Push (a Daraja API); see section 14, item 8.
 
 ---
@@ -99,7 +99,7 @@ Delivered zips in order (each later one is cumulative over the earlier ones unle
 | Styling | Tailwind 4 + CSS variables in `app/globals.css` (section 11) |
 | Database | **Supabase Postgres**, accessed **only server-side** with the service-role key |
 | Hosting | **Vercel Hobby** (one cron job, at most once a day) |
-| SMS | **Africa's Talking** (`africastalking` npm package; type stub `lib/africastalking.d.ts`) |
+| Messages | none sent by the app; WhatsApp links (`wa.me`) opened by the admin |
 | PDF | **`unpdf`** (serverless pdf.js; replaced `pdf.js-extract`, which failed on Vercel with a missing worker file) |
 | Tests | Node's built-in runner: `node --test` on `.ts` files (Node 22+). The `test` script in `package.json` **lists each file explicitly** |
 | Auth | Own HMAC-SHA256 signed cookies (`lib/session-token.ts`), no auth library |
@@ -115,8 +115,6 @@ Delivered zips in order (each later one is cumulative over the earlier ones unle
 | `ADMIN_USERNAME`, `ADMIN_PASSWORD` | yes | Superadmin login |
 | `SESSION_SECRET` | yes | Signs cookies |
 | `CRON_SECRET` | yes | Vercel sends it to `/api/cron/daily` |
-| `AT_API_KEY`, `AT_USERNAME` (`familyfundapp`), `AT_SENDER_ID` (leave empty) | key: yes | Africa's Talking |
-| `SMS_LIVE` | no | `false` = every send is a logged dry run; `true` = real SMS |
 | `ALLOW_TEST_DATA_RESET` | no | `true` temporarily enables the superadmin "clear test data" button; leave off |
 
 Business settings (Till, target, days, wording, thresholds, alert phone, site address) live in the **Setup page** (`settings` table; schema in `lib/settings.ts`), not env vars.
@@ -152,7 +150,7 @@ lib/ (pure unless marked SERVER)
   cancel-out.ts      rules for cancelling out a withdrawal + the deposit(s) that put it back + the fee on those deposits (deposit - fee = withdrawal, a few cents of rounding allowed)
   ledger-data.ts(SERVER) loads full-ledger inputs
   settings.ts        setting schema, defaults, validation
-  message-templates.ts reminders.ts report.ts admin-alerts.ts sms.ts messaging.ts(SERVER: plan + send texts)
+  message-templates.ts reminders.ts report.ts messaging.ts(SERVER: plans the monthly messages, sends nothing)
   health.ts export.ts pagination.ts load-members-for-matching.ts csv.ts canvas-stub.js
   family-tree.ts     tree rules (edit rights, hidden details, ranks, zoom/generations helpers)
   profile.ts data/places.ts data/careers.ts   structured education/work/residence (pure, NOT yet wired)
@@ -166,14 +164,14 @@ app/api/:
   tree (GET/POST)  tree/[id] (PATCH/DELETE)  tree/[id]/photo (GET/PUT/DELETE)  tree/connect  tree/parent
   cron/daily
   admin/{settings,members,members/[id],members/import,members/reorder,payments,payments/[id],
-         fund-expenses,statements/import,messages,sms-log,health,export,reset-test-data,cancel-out}
+         fund-expenses,statements/import,messages,health,export,reset-test-data,cancel-out}
 
 components/: AppNav ChatWidget FamilyTree FullLedger LogoutButton MemberDashboard OtherIncomeNotes
 components/admin/: AdminShell(tabs: Members Payments Import Reminders Health Setup + floating chat)
                    MembersManager PaymentsManager CancelOutPanel StatementImport Reminders HealthPanel SetupForm
 tests/ (19 files; the package.json "test" script lists each):
   dates phone ledger session-token(security guards) csv members-import settings payment-matching dashboard
-  statement-parser pdf-statement-line statement-csv reminders(messaging+health+alerts) sms pdf-table
+  statement-parser pdf-statement-line statement-csv reminders(messaging+health) pdf-table
   member-order report board family-tree
 ```
 
@@ -195,7 +193,7 @@ All tables have **RLS enabled and no policies**; the public anon key reads nothi
 | `payment_allocations` | `payment_id`, `member_id`, `amount`. **A payment with no allocation is not credited to anyone** (but still counts in Total in account) |
 | `fund_expenses` | `kind` (`charge`/`withdrawal`/`other`), `amount` > 0, `occurred_at`, `description`, `import_id` |
 | `imports` | one row per statement upload; counts, reported vs calculated closing balance, `integrity_ok`, `period_start`, `period_end` (set from this version on) |
-| `sms_log` | `kind` (`reminder`/`report`/`test`), `period` (`YYYY-MM`), `status` (`dry_run`/`sent`/`failed`/`skipped`); **a unique index allows only one `sent` per kind+period+member** |
+| `sms_log` | **history only: nothing writes to it since v9.4**; `kind` (`reminder`/`report`/`test`), `period` (`YYYY-MM`), `status` (`dry_run`/`sent`/`failed`/`skipped`); **a unique index allows only one `sent` per kind+period+member** |
 | `import_skip_receipts` | `mpesa_receipt` unique, `created_at`. **Receipt numbers only** (no amounts, no names). Written by cancel-out; the statement import treats any receipt on it as already recorded. Never shown, never in the backup export; cleared by the test-data reset |
 | `job_runs` | `job` (`daily`, `export`), `started_at`, `ok`, `details` (json) |
 | `login_attempts` | throttling (5 failures lock 15 minutes) |
@@ -222,13 +220,13 @@ All tables have **RLS enabled and no policies**; the public anon key reads nothi
 | D7 | Ledger, totals, chat and tree are visible only after member login. (The "phones admin-only" part was replaced by D23 for the tree.) |
 | D8 | Admin = one env login, separate from member login |
 | D9 | "Total in account" must equal the M-PESA balance (see D22) |
-| D10 | 7th reminder: members with balance > 0 get one SMS. Members with a payment **awaiting confirmation** are skipped and listed for the admin |
-| D11 | 15th report: **everyone** with a phone gets one SMS: collected this month, total in account, their **own balance** (owing / up to date / paid ahead) and the site link. Other members are never named |
-| D13 | SMS via Africa's Talking, **no custom sender ID** |
-| D14 | One **primary** phone (login + SMS) plus any number of alternates (login + matching) |
+| D10 | 7th reminder: members with balance > 0 are listed for a reminder (sent by hand via WhatsApp). Members with a payment **awaiting confirmation** are skipped and listed for the admin |
+| D11 | 15th report: **everyone** with a phone is listed for one (sent by hand via WhatsApp): collected this month, total in account, their **own balance** (owing / up to date / paid ahead) and the site link. Other members are never named |
+| D13 | **No text-message provider (11 Nov 2026).** Africa's Talking was removed (blocked route, a sender ID costs money). Reminders and reports are sent by the admin from the Reminders tab with WhatsApp links |
+| D14 | One **primary** phone (login + reminders) plus any number of alternates (login + matching) |
 | D15 | A phone match is counted automatically; a **name match is only a suggestion** ("Needs confirmation"); nothing usable goes to "Unmatched". **Never count money on a guess** |
 | D16 | **Nothing hard-coded in the database**; all config comes from Setup |
-| D17 | Members without a phone cannot log in or get SMS (flagged for the admin) |
+| D17 | Members without a phone cannot log in or get a reminder (flagged for the admin) |
 | D18 | Superadmin (env login) vs member-admin (`members.is_admin`); only the superadmin can grant the flag |
 | D19 | Member lists and the ledger are **eldest first** by the linked tree node's date of birth; members with unknown ages follow in the **admin's manual order** (up/down arrows), then by name |
 | D20 | A member with no tree entry must **connect to the tree** on first visit (claim an existing entry or add themselves under a parent). Never left floating |
@@ -250,7 +248,7 @@ All tables have **RLS enabled and no policies**; the public anon key reads nothi
 2. **The ledger engine is pure** (`lib/ledger.ts`): no database inside. Colours: amber = due, green = paid, blue = prepaid, grey = before joining.
 3. **Three different money figures:** (a) the member ledger = FIFO of `monthly` allocations; (b) **Group total this month** = ledger coverage of the current month (D21); (c) **Total in account** = all payments (any purpose, credited or not) minus all expenses (D22). The full ledger's final balance **equals (c)** and a test proves it. The Health tab compares (c) with the last statement's closing balance.
 4. **Statement integrity check:** per transaction (a payment and its charge share a receipt), each transaction's final balance is the smallest of its reported balances, each is checked against the previous, the first is trusted as the start (statements are partial). Withdrawn amounts may be **negative** in the source. **The server refuses to commit if integrity fails.** The import reports rows it could not save instead of skipping silently; re-importing the same file is safe (receipts de-duplicate).
-5. **SMS safety:** `SMS_LIVE` defaults to false (dry runs). One real SMS per member per kind per period (DB index + plan check). The sender number is sent as `+254...`.
+5. **Messages are never sent by the app.** The Reminders tab builds the text on the server and the admin opens WhatsApp with it. Phone numbers in the links are `254...` (no plus).
 6. **Daily cron** (`/api/cron/daily`, `0 5 * * *` UTC = 08:00 Nairobi): keep-alive query; reminder if today is within `reminder_day..+2`; report within `report_day..+2`; then the **admin alert**. Each job is independent. **Automatic sends are held when the last statement import is older than `auto_send_max_import_age_days`** (default 4; 0 = never hold) so people who already paid are not chased; a manual send is never held. The admin is texted two days before each send day and on each held day.
 7. **Nairobi time:** never read the month straight from a UTC timestamp; use `lib/dates.ts`.
 8. **Supabase returns at most 1000 rows**: use `fetchAllRows` (`lib/pagination.ts`) for totals.
@@ -274,7 +272,7 @@ All tables have **RLS enabled and no policies**; the public anon key reads nothi
 ## 10. KEY FLOWS (short)
 
 * **Statement import:** Import tab: choose file (+ password for PDF), Preview (shows balance check, every row's matched member), Import. PDF reading: `lib/pdf-statement.ts` (unpdf, y flipped to top-down, direction locked) -> `lib/pdf-table.ts` (header columns + receipt-anchored rows; tolerant of whole-phrase text pieces) -> `lib/statement-parser.ts` -> matching -> insert (`source: "statement"`).
-* **Texts:** `lib/messaging.ts` `planMessages` (preview, sends nothing) and `sendMessages` (re-plans on the server, never trusts browser text, logs to `sms_log`). Used by the cron and by `POST /api/admin/messages`.
+* **Reminders:** `lib/messaging.ts` `planMessages` (a preview; sends and writes nothing) feeds `GET /api/admin/messages` and the Reminders tab (WhatsApp link + Copy text per member). The daily cron (`/api/cron/daily`) only runs a keep-alive query and logs it to `job_runs`.
 * **Chat:** `components/ChatWidget.tsx` (home page and admin area) -> `/api/chat`; conversation keys `public`, `admin`, `member:<id>`, and for admins `inbox:<memberId>`.
 * **Tree:** `components/FamilyTree.tsx` -> `/api/tree*`; edit rights from `loadEditContext` (`lib/tree-data.ts`).
 
@@ -305,7 +303,7 @@ Warm paper, ink, hairline rules, one accent. CSS variables in `app/globals.css` 
 
 ## 13. TESTING AND VERIFICATION
 
-* `npm test` (Node runner). Currently **322 pass, 0 fail** in the sandbox (303 in the last build the owner confirmed, v8.2). Add tests for every rule; add a regression test for every bug; prove a new guard test fails on the old code.
+* `npm test` (Node runner). Currently **301 pass, 0 fail** in the sandbox (303 in the last build the owner confirmed, v8.2). Add tests for every rule; add a regression test for every bug; prove a new guard test fails on the old code.
 * Pure logic is exercised for real. Routes, components and SQL can only be syntax-checked in a sandbox: **say so plainly** and rely on the owner's `npm run build`, their screenshots and the Supabase check query.
 * Before handing over a zip: apply it onto a clean copy of the owner's project (their `package.json` kept) and run `npm test`; syntax-check changed `.ts/.tsx`; type-check pure libs with target ES2017.
 * Test fakes: a small fake Supabase client (chained `select/eq/order/limit/insert`) in `tests/reminders.test.ts`. **Rows must carry every column a query filters on** (adding `.eq("contributes", true)` to a query means the fake rows need `contributes: true`).
@@ -352,16 +350,17 @@ Warm paper, ink, hairline rules, one accent. CSS variables in `app/globals.css` 
 
 * Run `db/005`, `db/006`, `db/007` in Supabase (check query values `true`); `db/008` (erase cancelled, v9.2); later `db/009`.
 * **Rotate secrets** and check git history for `.env.local` (`docs/GO-LIVE.md`, Part 1).
-* Africa's Talking: generate the API key, add credit, set `AT_API_KEY`, `AT_USERNAME`, then `SMS_LIVE=true` and redeploy; test to themselves first. Set their phone in Setup ("Your phone number, for reminders to import the statement") and the **Site address** `https://family-fund-app-nine.vercel.app`.
+* In Vercel, delete `AT_API_KEY`, `AT_USERNAME`, `AT_SENDER_ID` and `SMS_LIVE`, then redeploy. Set the **Site address** in Setup to `https://family-fund-app-nine.vercel.app`.
 * Import the latest statement before the 7th each month; clear the Needs-confirmation / Unmatched queues; download a full backup monthly (Health tab).
 * Send the sample payment SMS (section 14 item 9) and answer the parent question (3.4).
-* Fix the Africa's Talking 401 (see 3.4) and resend the failed reminders.
+* Run `npm uninstall africastalking` once (it updates `package.json` and `package-lock.json`).
 * Confirm everything that is unconfirmed in 3.3.
 
 ---
 
 ## 16. CHANGELOG (compact, newest first)
 
+* **v9.4 (11 Nov 2026):** **Africa's Talking and all app-sent texts removed** (see 3.4 for the list). The Reminders tab is now a WhatsApp/Copy list; the daily cron is keep-alive only; the Health tab loses the SMS and import-alert lines; Setup loses the alert phone and the "hold automatic texts" wording (the stale-data limit stays as a warning). `db` unchanged. 301 tests.
 * **v9.3 (11 Nov 2026):** Cancel out accepts a **hanging fee** (its deposit already erased) against a deposit paid in to cover it; leftover over KES 1 is allowed only in that case and is kept as plain other income. `lib/cancel-out.ts` (`orphanFee`, `leftoverIsRounding`), cancel-out route (`hangingFees`, server-decided), panel lists hanging fees. 322 tests.
 * **v9.2 (11 Nov 2026):** **cancel out without a trace**: also erases the M-PESA fee charged on the deposit; deposit - fee must equal the withdrawal, cents of rounding kept as one "Rounding" line; no `job_runs` audit; erased receipt numbers kept in `import_skip_receipts` so old statements cannot resurrect them (statement import skips them); tool shown only to the superadmin (`AdminShell`/`PaymentsManager` get `isSuperAdmin`); `db/008` (also copies receipts from old cancel_out records and deletes those records); family-profile migration renumbered to `db/009`. 320 tests.
 * **v9.1 (23 Oct 2026):** **cancel out** a withdrawal and the deposit(s) that put it back (`lib/cancel-out.ts`, `/api/admin/cancel-out`, `components/admin/CancelOutPanel.tsx`, Payments tab; superadmin only; equal totals only; audit in `job_runs`); join-form bug fixed (`has()` ignores undefined); pure profile libraries and option lists added (not wired); this handover README. 314 tests.

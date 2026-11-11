@@ -46,7 +46,7 @@ export const publicEnv = {
 // server code (route handlers, server components, cron jobs) — never
 // from a file that also runs in the browser. Calling it lazily (as a
 // function, not a top-level constant) means a route that doesn't need
-// e.g. Africa's Talking credentials won't crash just because they are
+// e.g. the Daraja credentials won't crash just because they are
 // still blank early in the project.
 // ---------------------------------------------------------------------
 export function serverEnv() {
@@ -66,11 +66,7 @@ export function serverEnv() {
     sessionSecret: required("SESSION_SECRET"),
     cronSecret: required("CRON_SECRET"),
 
-    // Optional until Step 8 (SMS) / Step 11 (Daraja) are wired up.
-    atApiKey: optional("AT_API_KEY"),
-    atUsername: optional("AT_USERNAME"),
-    atSenderId: optional("AT_SENDER_ID"),
-    smsLive: optionalBoolean("SMS_LIVE", false),
+    // Optional until Step 11 (Daraja) is wired up.
     // OFF by default. Lets the superadmin wipe members, payments and expenses (testing only).
     allowTestDataReset: optionalBoolean("ALLOW_TEST_DATA_RESET", false),
 

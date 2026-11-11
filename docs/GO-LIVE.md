@@ -98,9 +98,8 @@ Open `/admin` and click **Setup**. Check or fill in every field, then **Save**:
 
 * **Fund name**, **Till number** (the number members really pay to), **monthly target** (300), **financial-year start month** (August = 8).
 * **Reminder day** (7) and **Report day** (15).
-* **Site address**: `https://family-fund-app-nine.vercel.app` (it goes in every text message as the link).
-* **Your phone number, for reminders to import the statement**: your own mobile number. This is where the app texts you when the payment data is getting old.
-* **Hold the automatic texts if the payment data is older than (days)**: leave at 4.
+* **Site address**: `https://family-fund-app-nine.vercel.app` (it goes in every reminder message as the link).
+* **Flag the payment data as old after this many days**: leave at 4. The Reminders and Health tabs then warn you to import a newer statement before you send reminders.
 * **Message wording** for the reminder and the report. Read both. They must include the balance and the site link.
 
 ### Step 7. Members tab
@@ -123,51 +122,41 @@ Open the **Health** tab and click **Download full backup**. Keep the file somewh
 
 ---
 
-## PART 3. Switch on the texts
+## PART 3. Sending the reminders (free, by WhatsApp)
 
-### Step 10. Africa's Talking
+The app does not send text messages. (Africa's Talking was removed on 11 Nov 2026: its route was blocked and a sender name costs money.) The app works out who should get the monthly reminder and report, with the exact wording, and you send each one from WhatsApp in a few taps.
 
-1. Sign in at africastalking.com and open your app `familyfundapp`.
-2. **Settings, then API Key:** generate a key and copy it (it is usually shown only once).
-3. **Billing or Top Up:** add credit (KES 200 to 500 is plenty to start).
+### Step 10. Clean up Vercel (one time)
 
-### Step 11. Put the texting settings into Vercel
+In Vercel, Settings, Environment Variables, **remove** `AT_API_KEY`, `AT_USERNAME`, `AT_SENDER_ID` and `SMS_LIVE` (three dots, then Remove). Nothing uses them any more. Then **Redeploy**.
 
-In Vercel, Settings, Environment Variables, add (or edit):
+### Step 11. Send the monthly reminder
 
-| Name | Value |
-|---|---|
-| `AT_USERNAME` | `familyfundapp` |
-| `AT_API_KEY` | your key from Step 10 |
-| `SMS_LIVE` | `true` |
+1. Import the latest statement first (Part 4), so nobody who has paid is reminded.
+2. Open the **Reminders** tab. Choose **Reminder** (or **Fund report**).
+3. Each member who should get it has a **WhatsApp** button. Press it: WhatsApp opens with that member's message already written. Press send in WhatsApp, then come back and press the next one.
+4. **Copy text** copies the message if you would rather paste it somewhere else.
 
-Leave the sender ID setting empty. Then **Redeploy** (Step 3d, parts 1 and 2).
+You do this by hand, about once around the 7th (reminder) and once around the 15th (report).
 
-### Step 12. Send one test text to yourself first
-
-1. **Reminders** tab. Untick everyone except **yourself or one trusted member**.
-2. Click **Send**. The banner at the top must say live sending is **ON**.
-3. Check that the text arrives and reads correctly, with the balance and the link.
-4. Only then select everyone you want to text.
-
-### Step 13. Check the automatic daily job
+### Step 12. Check the daily job
 
 1. In Vercel open your project, **Settings**, then **Cron Jobs**. You should see one job for `/api/cron/daily`. (Vercel may offer a **Run** button there. If it does, press it once.)
-2. In your site open **Admin, Health**. "Daily job" should turn green ("Ran ... hours ago"). It runs every morning at about 08:00 Nairobi time, with no clicking.
+2. In your site open **Admin, Health**. "Daily job" should turn green ("Ran ... hours ago"). It runs every morning at about 08:00 Nairobi time, with no clicking. All it does is keep the free database from going to sleep.
 
 ---
 
 ## PART 4. The monthly routine (about 10 minutes)
 
-| When | What happens by itself | What you do |
-|---|---|---|
-| About the **3rd to the 5th** | The app texts you if the payment data is old ("please import the latest statement") | Request the M-PESA statement for the Till (PDF or CSV). **Import** tab: Preview, check "Balance reconciles", Import. Then clear **Needs confirmation** and **Unmatched** in the Payments tab. |
-| The **7th**, 08:00 | The arrears reminder goes to members who owe money | Nothing. |
-| About the **13th** | The app texts you if the data is old again | Import the latest statement the same way. |
-| The **15th**, 08:00 | The fund report goes to everyone (collected this month, total in account, their own balance) | Nothing. |
-| Once a month | | **Health** tab, **Download full backup**. |
+| When | What you do |
+|---|---|
+| About the **3rd to the 5th** | Request the M-PESA statement for the Till (PDF or CSV). **Import** tab: Preview, check "Balance reconciles", Import. Then clear **Needs confirmation** and **Unmatched** in the Payments tab. |
+| Around the **7th** | **Reminders** tab, **Reminder**: press **WhatsApp** for each member listed. |
+| About the **13th** | Import the latest statement the same way. |
+| Around the **15th** | **Reminders** tab, **Fund report**: press **WhatsApp** for each member listed. |
+| Once a month | **Health** tab, **Download full backup**. |
 
-If you forget to import, the automatic text **waits** instead of reminding people who have already paid. It goes out on the next daily run after you import, as long as that is within two days of its day.
+The **Health** tab shows the next reminder and report dates. The app never sends anything by itself, so nothing goes out if you forget. If the payment data is old, the Reminders tab says so: import first, so people who have already paid are not reminded.
 
 If money was taken out and then put back, the main admin login (only that one) can erase it on the **Payments** tab, under **Cancel out a withdrawal and the deposit that put it back**: tick the withdrawal and the deposit(s) that replaced it. The M-PESA fee charged on a deposit goes with it. The deposit, less its fee, must equal the withdrawal, so the Total in account does not change; a few cents of difference stay as one line called Rounding. Nothing is kept about what was erased, and the erased M-PESA receipts are skipped if you import an old statement again.
 
@@ -184,7 +173,7 @@ Record bank withdrawals and other expenses (not M-PESA charges, which come in wi
 | "Balance did not reconcile" on import | Do not import. The file may be incomplete or damaged. Download the statement again, or send me the preview screenshot. |
 | Imported, but payments are missing | The red message under the Import button says how many failed and why. Send it to me. Importing the same file again is safe: saved rows are skipped, so nothing is counted twice. |
 | "Could not load ..." on any page | Open Vercel, your project, **Logs**, set the time to "last hour", and screenshot the red lines. |
-| A text did not arrive | **Reminders** tab, bottom list **Recent messages**: it shows sent, failed or dry run, with the reason. Check Africa's Talking has credit. Meanwhile each ready message has a **WhatsApp** link you can use by hand. |
+| A WhatsApp button does not open WhatsApp | Check the member's number on the Members tab (it must be a Kenyan mobile number). Use **Copy text** and paste the message into WhatsApp yourself. |
 | The Health tab shows amber or red | Read the line: each one says what to do. |
 | A deploy fails | In Vercel, Deployments, click the failed one and screenshot the red text. The previous version keeps running meanwhile. |
 
@@ -197,7 +186,7 @@ Record bank withdrawals and other expenses (not M-PESA charges, which come in wi
   * Everyone chooses what the family can see: when editing, each detail has a **"Show to the family"** box. Name and photo are always shown. A detail someone hides is still visible to that person, their parent, their children and you.
   * Add a **photo** from the edit screen. It is shrunk automatically.
   * Tip: fill in **dates of birth**; the member lists and the ledger then go in order, eldest first, automatically (the date itself can be hidden).
-* **Chat** (the round button at the bottom right of the home page and of the admin area). One chat with a **To:** choice at the top: **Everyone**, a particular member (a private chat that nobody else can see, not even you), or the **Admin**. You get a **text message** when a member writes to you privately (to the phone number in Setup, and to any member you marked as an admin). Messages to you appear in the same chat as extra conversations; pick one and reply. Anyone can remove their own message, and you can remove anything on the public chat.
+* **Chat** (the round button at the bottom right of the home page and of the admin area). One chat with a **To:** choice at the top: **Everyone**, a particular member (a private chat that nobody else can see, not even you), or the **Admin**. The app does not text you when a member writes to you privately: unread private messages show on the **Messages** line of the **Health** tab. Messages to you appear in the same chat as extra conversations; pick one and reply. Anyone can remove their own message, and you can remove anything on the public chat.
 
 ## What is not built yet
 

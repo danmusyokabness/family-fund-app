@@ -27,7 +27,7 @@ export const SETTINGS_SCHEMA: SettingField[] = [
     type: "string",
     default: "Family Emergency Fund",
     required: true,
-    helpText: "Shown on the login page and at the start of every SMS.",
+    helpText: "Shown on the login page and at the start of every reminder message.",
   },
   {
     key: "till_number",
@@ -58,7 +58,7 @@ export const SETTINGS_SCHEMA: SettingField[] = [
   },
   {
     key: "reminder_day",
-    label: "Day of the month to send arrears reminders",
+    label: "Day of the month for the arrears reminder",
     type: "integer",
     default: "7",
     required: true,
@@ -67,7 +67,7 @@ export const SETTINGS_SCHEMA: SettingField[] = [
   },
   {
     key: "report_day",
-    label: "Day of the month to send the fund report",
+    label: "Day of the month for the fund report",
     type: "integer",
     default: "15",
     required: true,
@@ -75,31 +75,21 @@ export const SETTINGS_SCHEMA: SettingField[] = [
     max: 28,
   },
   {
-    key: "admin_alert_phone",
-    label: "Your phone number, for reminders to import the statement",
-    type: "string",
-    default: "",
-    required: false,
-    helpText:
-      "When the payment data is getting old, a text is sent here two days before each monthly text is due, and again on each day an automatic " +
-      "text is held back, so you remember to import the latest statement. Any member who is marked as an admin is also told. Leave empty to rely on the Health tab only.",
-  },
-  {
     key: "auto_send_max_import_age_days",
-    label: "Hold the automatic texts if the payment data is older than (days)",
+    label: "Flag the payment data as old after this many days",
     type: "integer",
     default: "4",
     required: false,
     min: 0,
     max: 60,
     helpText:
-      "The app only knows about payments you have imported (a statement upload). If the last import is older than this many days " +
-      "when a text is due, the automatic text waits (and is sent on a later day in its window once you import), so nobody who has " +
-      "already paid is reminded by mistake. 0 = always send, however old the data is.",
+      "The app only knows about payments you have imported (a statement upload). If the last import is older than this many days, " +
+      "the Reminders and Health tabs warn you to import a newer statement before you send reminders, so nobody who has " +
+      "already paid is reminded by mistake. 0 = never warn.",
   },
   {
     key: "site_url",
-    label: "Site link (included in SMS messages)",
+    label: "Site link (included in reminder messages)",
     type: "string",
     default: "",
     required: false,

@@ -188,3 +188,25 @@ test("statement import: receipts that were erased on purpose are treated as alre
   const route = read("app/api/admin/statements/import/route.ts");
   assert.ok(route.includes("import_skip_receipts") && route.includes("erasedReceipts.has(row.receiptNo)"));
 });
+
+test("no text-message provider: Africa's Talking is gone from the code, nothing can send a text, and the daily job only keeps the database awake", () => {
+  const files: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of listDir(toPath(new URL(`../${dir}`, import.meta.url)), { withFileTypes: true })) {
+      const rel = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) walk(rel);
+      else if (/\.(ts|tsx)$/.test(entry.name) && !rel.startsWith("lib/data/")) files.push(rel);
+    }
+  };
+  for (const dir of ["app", "lib", "components"]) walk(dir);
+  for (const file of files) {
+    const text = read(file);
+    assert.ok(!/africastalking|SMS_LIVE|AT_API_KEY|AT_USERNAME|AT_SENDER_ID|sendSms\(/i.test(text.replace(/Africa's Talking was removed/g, "")), `${file} still refers to the text-message provider`);
+  }
+  assert.ok(!existsSync(toPath(new URL("../lib/sms.ts", import.meta.url))), "lib/sms.ts must not exist");
+  const messages = read("app/api/admin/messages/route.ts");
+  assert.ok(!/export async function POST/.test(messages), "the messages route must only preview, never send");
+  const cron = read("app/api/cron/daily/route.ts");
+  assert.ok(!/sendMessages|sendAdminAlert/.test(cron), "the daily job must not send texts");
+  assert.ok(cron.includes('from("settings")'), "the daily job must still run its keep-alive query");
+});

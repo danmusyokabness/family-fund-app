@@ -28,7 +28,6 @@ import {
   type BoardDbRow,
   type BoardRow,
 } from "@/lib/board";
-import { notifyAdminsOfPrivateMessage } from "@/lib/messaging";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -164,14 +163,12 @@ export async function POST(req: NextRequest) {
   }
 
   let insert: Record<string, unknown>;
-  let notifyAdmin = false;
 
   if (to === "public") {
     insert = { member_id: me, sender_name: actor.name, content: checked.content, is_private: false, is_from_admin: false };
   } else if (to === "admin") {
     if (!me) return NextResponse.json({ error: "Reply to members from the conversation list." }, { status: 400 });
     insert = { member_id: me, sender_name: actor.name, content: checked.content, is_private: true, to_admin: true, is_from_admin: false };
-    notifyAdmin = true;
   } else if (to.startsWith("member:")) {
     const other = to.slice("member:".length);
     if (!me) return NextResponse.json({ error: "Only members can start a private chat." }, { status: 400 });
@@ -195,7 +192,6 @@ export async function POST(req: NextRequest) {
   const { error } = await db.from("message_board").insert(insert);
   if (error) return NextResponse.json({ error: "Could not send that message." }, { status: 500 });
 
-  if (notifyAdmin) await notifyAdminsOfPrivateMessage(db, actor.name);
   return NextResponse.json({ ok: true });
 }
 

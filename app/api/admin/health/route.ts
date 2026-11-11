@@ -1,15 +1,14 @@
 // app/api/admin/health/route.ts
 //
 // GET -> everything the Health tab shows: green/amber/red checks, the
-// schedule, recent runs of the daily job, and the last texts sent.
-// Admin only. Secrets are never returned: only whether they are set.
+// schedule of the monthly messages and recent runs of the daily job.
+// Admin only.
 
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
-import { serverEnv } from "@/lib/env";
 import { nairobiTodayDateString } from "@/lib/dates";
-import { adminAlertPhones, loadDataFreshness, loadSettings } from "@/lib/messaging";
+import { loadDataFreshness, loadSettings } from "@/lib/messaging";
 import { buildHealthChecks, nextScheduledDate, overallStatus } from "@/lib/health";
 import { balanceAsOf, buildFullLedger } from "@/lib/full-ledger";
 import { loadFullLedgerInputs } from "@/lib/ledger-data";
@@ -25,7 +24,6 @@ export async function GET() {
 
   try {
     const db = supabaseAdmin();
-    const env = serverEnv();
     const settings = await loadSettings(db);
     const today = nairobiTodayDateString();
 
@@ -56,19 +54,6 @@ export async function GET() {
       .eq("is_active", true)
       .returns<MemberRow[]>();
     const membersWithoutPhone = (memberRows ?? []).filter((m) => (m.member_phones ?? []).length === 0).map((m) => m.full_name);
-
-    const { data: sentRows } = await db
-      .from("sms_log")
-      .select("kind, period, created_at")
-      .eq("status", "sent")
-      .order("created_at", { ascending: false })
-      .limit(40);
-    const lastTexts: Record<"reminder" | "report", { period: string; at: string } | null> = { reminder: null, report: null };
-    for (const row of sentRows ?? []) {
-      if ((row.kind === "reminder" || row.kind === "report") && !lastTexts[row.kind as "reminder" | "report"]) {
-        lastTexts[row.kind as "reminder" | "report"] = { period: row.period, at: row.created_at };
-      }
-    }
 
     // Does the fund's own total agree with the bank's closing balance on the last imported statement?
     let statementCheck: { closingBalance: number; asOfDate: string; ledgerBalance: number } | null = null;
@@ -111,14 +96,11 @@ export async function GET() {
     const checks = buildHealthChecks({
       now: new Date().toISOString(),
       lastDailyRun: lastRun ? { startedAt: lastRun.started_at, ok: lastRun.ok, details: lastRun.details } : null,
-      smsLive: env.smsLive,
-      atConfigured: Boolean(env.atApiKey && env.atUsername),
       freshness,
       needsConfirmation: needs.count ?? 0,
       unmatched: unmatched.count ?? 0,
       membersWithoutPhone,
       lastBackupAt: backups && backups.length > 0 ? backups[0].started_at : null,
-      alertPhoneCount: (await adminAlertPhones(db, settings)).length,
       statementCheck,
       unreadMessages: unreadMessages.count ?? 0,
     });
@@ -137,7 +119,6 @@ export async function GET() {
         nextReport: nextScheduledDate(today, reportDay),
         maxImportAgeDays: freshness.maxAgeDays,
       },
-      lastTexts,
       runs: (runs ?? []).map((r) => ({ startedAt: r.started_at, ok: r.ok, details: r.details })),
       canBackup: auth.admin.isSuperAdmin,
     });

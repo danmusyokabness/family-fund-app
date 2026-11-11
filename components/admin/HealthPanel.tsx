@@ -18,7 +18,6 @@ interface Health {
   overall: CheckStatus;
   checks: Check[];
   schedule: { today: string; reminderDay: number; reportDay: number; nextReminder: string; nextReport: string; maxImportAgeDays: number };
-  lastTexts: { reminder: { period: string; at: string } | null; report: { period: string; at: string } | null };
   runs: { startedAt: string; ok: boolean | null; details: unknown }[];
   canBackup: boolean;
 }
@@ -26,9 +25,6 @@ interface Health {
 const COLOR: Record<CheckStatus, string> = { ok: "var(--forest)", warn: "var(--ochre)", bad: "var(--danger)" };
 const WORD: Record<CheckStatus, string> = { ok: "All good", warn: "Needs attention", bad: "Problem" };
 
-function when(iso: string): string {
-  return new Date(iso).toLocaleString("en-GB", { timeZone: "Africa/Nairobi", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-}
 function day(date: string): string {
   const [y, m, d] = date.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-GB", { timeZone: "UTC", weekday: "short", day: "numeric", month: "long", year: "numeric" });
@@ -47,6 +43,10 @@ function runSummary(details: unknown): string {
   if (d.reminders) parts.push(d.reminders.held ? "reminder held back" : `reminder: ${d.reminders.sent ?? 0} sent`);
   if (d.report) parts.push(d.report.held ? "report held back" : `report: ${d.report.sent ?? 0} sent`);
   return parts.length > 0 ? parts.join(", ") : "kept the database awake";
+}
+
+function when(iso: string): string {
+  return new Date(iso).toLocaleString("en-GB", { timeZone: "Africa/Nairobi", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
 export default function HealthPanel() {
@@ -101,20 +101,16 @@ export default function HealthPanel() {
       </div>
 
       <div className="paper-card space-y-1 p-4 text-sm">
-        <h3 className="font-medium">Automatic texts</h3>
+        <h3 className="font-medium">Monthly messages</h3>
         <p className="text-ink-soft">
           Next reminder: <strong>{day(health.schedule.nextReminder)}</strong> (day {health.schedule.reminderDay} of each month).
         </p>
         <p className="text-ink-soft">
           Next fund report: <strong>{day(health.schedule.nextReport)}</strong> (day {health.schedule.reportDay} of each month).
         </p>
-        <p className="text-ink-soft">
-          Last reminder sent: {health.lastTexts.reminder ? `${when(health.lastTexts.reminder.at)} (for ${health.lastTexts.reminder.period})` : "never"}. Last report sent:{" "}
-          {health.lastTexts.report ? `${when(health.lastTexts.report.at)} (for ${health.lastTexts.report.period})` : "never"}.
-        </p>
         <p className="text-xs text-ink-soft">
-          Import a statement a few days before each date so the texts use up-to-date payments (they wait if the data is more than{" "}
-          {health.schedule.maxImportAgeDays} day(s) old).
+          Import a statement a few days before each date, then send them from the Reminders tab (the app sends nothing by itself). Data older than{" "}
+          {health.schedule.maxImportAgeDays} day(s) is flagged above.
         </p>
       </div>
 
