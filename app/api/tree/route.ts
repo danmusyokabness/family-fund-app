@@ -2,7 +2,8 @@
 //
 // GET  -> the whole family tree (everyone who has not been removed), who
 //         is looking, which entries they may edit, and whether they still
-//         have to connect themselves to it (decision D20). Details a
+//         have to connect themselves to it (decision D20) or fill in their
+//         details (needsProfile: asked once, the first time). Details a
 //         person has chosen to hide are left out unless the viewer may
 //         edit that entry.
 // POST -> add a person. A member may add a child under themselves or a
@@ -12,7 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getActor } from "@/lib/actors";
 import { supabaseAdmin } from "@/lib/supabase";
 import { nairobiTodayDateString } from "@/lib/dates";
-import { needsToConnect, rowFromPatch, sanitizeNodePatch, viewForViewer, withRanks } from "@/lib/family-tree";
+import { needsProfile, needsToConnect, rowFromPatch, sanitizeNodePatch, viewForViewer, withRanks } from "@/lib/family-tree";
 import { loadEditContext } from "@/lib/tree-data";
 
 export async function GET() {
@@ -33,6 +34,8 @@ export async function GET() {
       canAddParent: Boolean(ctx.mine && !ctx.nodes.some((n) => n.id === ctx.mine?.parentId)),
       // A member must be placed in the tree; the main admin login is not a member.
       needsToConnect: actor.memberId ? needsToConnect(ctx.nodes, actor.memberId) : false,
+      // A member who has not filled in their details yet is asked once, the first time they open the tree.
+      needsProfile: actor.memberId ? needsProfile(ctx.nodes, actor.memberId) : false,
     });
   } catch {
     return NextResponse.json({ error: "Could not load the family tree." }, { status: 500 });

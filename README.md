@@ -1,4 +1,4 @@
-# Family Emergency Fund Platform: Handover README (v9.4, 11 Nov 2026)
+# Family Emergency Fund Platform: Handover README (v9.5, 11 Nov 2026)
 
 > **This file is the single source of truth for continuing the project with any AI agent or developer.** It describes the app, the owner, the rules, the exact state of the work, and what to do next. **The code is the truth for what is implemented; this file is the truth for intent, decisions and rules.** Verify this README against the real code before changing anything.
 
@@ -65,7 +65,7 @@ Live at `https://family-fund-app-nine.vercel.app` (Vercel). GitHub: `github.com/
 | **Cancel out** (Payments tab): erase a withdrawal, the deposit(s) that put it back and the M-PESA fee on those deposits, in one step, with the Total in account unchanged and no trace left (a few cents of rounding stay as one plain "Rounding" line). The tool is shown to and usable by the superadmin only | ✅ v9.3 (needs `db/008`) |
 | **Chat** (floating button: Everyone / a member privately / the Admin; admin inbox in the same widget; text to admin on a private message) | ✅ |
 
-### 3.2 Pure libraries added in v9.1 but NOT wired into the app yet
+### 3.2 Family tree: profile libraries (v9.1) now wired in by v9.5
 
 Delivered in `cancel-out-17.zip` together with the cancel-out feature (they change nothing the owner sees):
 
@@ -74,11 +74,11 @@ Delivered in `cancel-out-17.zip` together with the cancel-out feature (they chan
 * `lib/data/places.ts` (new): countries (Kenya first), Kenya's 47 counties, `regionsFor`. `lib/data/careers.ts` (new): education levels, work statuses, sectors, Kenyan institutions, job titles.
 * Tests for these are appended to `tests/family-tree.test.ts`.
 
-**Still to build** (section 14): `TreeNode`/`TreeRow`/patches do not yet carry `education`, `work`, `residence`; `HIDEABLE_FIELDS` must gain `education`, `work`, `residence`; `hasBirth` and `newPersonProblem` (the mandatory name + birth date rules) do not exist yet; migration `db/009`; the API and UI; family-only members; the pay helper.
+**Built in v9.5 (`tree-first-visit-21`, needs `db/009`):** `TreeNode`/`TreeRow`/`NodePatch` carry `education`, `work`, `residence` and `profileCompletedAt`; `HIDEABLE_FIELDS` includes `education`, `work`, `residence`; `changedFields` compares lists exactly; `viewForViewer` blanks hidden lists to `[]` and residence to `null`; `needsProfile`; `lib/onboarding.ts` (`planOnboarding`: the required details and parent rules); `POST /api/tree/onboard`; `components/TreeOnboarding.tsx` (the first-visit form), `components/ProfileFields.tsx` (the three structured editors, used there and in the edit form), `components/tree-common.tsx` (shared helpers). **Still to build:** the permanent "My information" section with Add my child/spouse/parent buttons (item 3), the family's own entries as datalist suggestions, family-only members (item 5), the pay helper.
 
 ### 3.3 What the owner has applied (UNCONFIRMED: ask)
 
-Delivered zips in order (each later one is cumulative over the earlier ones unless noted): `batch-1` (db 001-004, SMS fix, PDF reader, member ordering), `all-fixes-combined`, `reminders-6`, `ledger-and-messages-7`, `admin-complete-8`, `alerts-9`, `hardening-10`, `payment-purposes-11`, `other-income-12`, `tree-and-board-13`, `tree-chat-14`, `fix-photo-regex-15`, `tree-zoom-colour-16`, `fix-join-form-17`, `erase-cancelled-18`, `hanging-fee-19`, `no-sms-20`. From a screenshot the owner has deployed **at least `tree-chat-14`**. SQL files `db/005`, `db/006`, `db/007` were requested, and **`db/008` (erase cancelled) is new in v9.2**; **confirm they ran** (compare the schema export with section 6). Also unconfirmed: secrets rotated (the very first zip contained `.env.local`), `git rm -r legacy` (confirmed done). Vercel variables `AT_API_KEY`, `AT_USERNAME`, `AT_SENDER_ID`, `SMS_LIVE` should be deleted (nothing reads them now); and `npm uninstall africastalking` should be run once.
+Delivered zips in order (each later one is cumulative over the earlier ones unless noted): `batch-1` (db 001-004, SMS fix, PDF reader, member ordering), `all-fixes-combined`, `reminders-6`, `ledger-and-messages-7`, `admin-complete-8`, `alerts-9`, `hardening-10`, `payment-purposes-11`, `other-income-12`, `tree-and-board-13`, `tree-chat-14`, `fix-photo-regex-15`, `tree-zoom-colour-16`, `fix-join-form-17`, `erase-cancelled-18`, `hanging-fee-19`, `no-sms-20`, `tree-first-visit-21`. From a screenshot the owner has deployed **at least `tree-chat-14`**. SQL files `db/005`, `db/006`, `db/007` were requested, and **`db/008` (erase cancelled) is new in v9.2**; **confirm they ran** (compare the schema export with section 6). Also unconfirmed: secrets rotated (the very first zip contained `.env.local`), `git rm -r legacy` (confirmed done). Vercel variables `AT_API_KEY`, `AT_USERNAME`, `AT_SENDER_ID`, `SMS_LIVE` should be deleted (nothing reads them now); and `npm uninstall africastalking` should be run once.
 
 ### 3.4 Owner decisions pending / open questions
 
@@ -131,6 +131,7 @@ db/004_tree_board_hardening.sql   members.sort_order, tree soft delete, family_n
 db/005_security_check.sql         RLS on every table, anon access revoked, proof table
 db/006_payment_purpose.sql        payments.purpose, related_expense_id
 db/007_tree_privacy_chat.sql      tree: hidden_fields, photo, has_photo, spouse_details; chat: recipient_member_id, to_admin
+db/009_family_profile.sql         family_nodes education/work/residence/profile_completed_at; members.contributes
 db/008_erase_cancelled.sql        import_skip_receipts (erased M-PESA receipt numbers, nothing else); copies receipts from old cancel_out records into it, then deletes those records
 docs/GO-LIVE.md                   beginner go-live steps, monthly routine, troubleshooting
 AGENTS.md CLAUDE.md .env.example .gitignore next.config.ts (security headers) vercel.json (cron 0 5 * * *) tsconfig.json package.json
@@ -147,6 +148,7 @@ lib/ (pure unless marked SERVER)
   statement-parser.ts statement-csv.ts pdf-statement-line.ts pdf-table.ts pdf-statement.ts(SERVER, unpdf)
   members-import.ts  member CSV parsing + merge planning
   full-ledger.ts     the full ledger + "other income" summary + balanceAsOf
+  onboarding.ts      rules for the first-visit details form (date of birth + parent required)
   cancel-out.ts      rules for cancelling out a withdrawal + the deposit(s) that put it back + the fee on those deposits (deposit - fee = withdrawal, a few cents of rounding allowed)
   ledger-data.ts(SERVER) loads full-ledger inputs
   settings.ts        setting schema, defaults, validation
@@ -249,7 +251,7 @@ All tables have **RLS enabled and no policies**; the public anon key reads nothi
 3. **Three different money figures:** (a) the member ledger = FIFO of `monthly` allocations; (b) **Group total this month** = ledger coverage of the current month (D21); (c) **Total in account** = all payments (any purpose, credited or not) minus all expenses (D22). The full ledger's final balance **equals (c)** and a test proves it. The Health tab compares (c) with the last statement's closing balance.
 4. **Statement integrity check:** per transaction (a payment and its charge share a receipt), each transaction's final balance is the smallest of its reported balances, each is checked against the previous, the first is trusted as the start (statements are partial). Withdrawn amounts may be **negative** in the source. **The server refuses to commit if integrity fails.** The import reports rows it could not save instead of skipping silently; re-importing the same file is safe (receipts de-duplicate).
 5. **Messages are never sent by the app.** The Reminders tab builds the text on the server and the admin opens WhatsApp with it. Phone numbers in the links are `254...` (no plus).
-6. **Daily cron** (`/api/cron/daily`, `0 5 * * *` UTC = 08:00 Nairobi): keep-alive query; reminder if today is within `reminder_day..+2`; report within `report_day..+2`; then the **admin alert**. Each job is independent. **Automatic sends are held when the last statement import is older than `auto_send_max_import_age_days`** (default 4; 0 = never hold) so people who already paid are not chased; a manual send is never held. The admin is texted two days before each send day and on each held day.
+6. **Daily cron** (`/api/cron/daily`, `0 5 * * *` UTC = 08:00 Nairobi): a keep-alive query only (so Supabase's free tier never pauses), logged in `job_runs` for the Health tab. It sends nothing (v9.4).
 7. **Nairobi time:** never read the month straight from a UTC timestamp; use `lib/dates.ts`.
 8. **Supabase returns at most 1000 rows**: use `fetchAllRows` (`lib/pagination.ts`) for totals.
 9. **Soft deletes only** for the tree and chat.
@@ -303,7 +305,7 @@ Warm paper, ink, hairline rules, one accent. CSS variables in `app/globals.css` 
 
 ## 13. TESTING AND VERIFICATION
 
-* `npm test` (Node runner). Currently **301 pass, 0 fail** in the sandbox (303 in the last build the owner confirmed, v8.2). Add tests for every rule; add a regression test for every bug; prove a new guard test fails on the old code.
+* `npm test` (Node runner). Currently **310 pass, 0 fail** in the sandbox (303 in the last build the owner confirmed, v8.2). Add tests for every rule; add a regression test for every bug; prove a new guard test fails on the old code.
 * Pure logic is exercised for real. Routes, components and SQL can only be syntax-checked in a sandbox: **say so plainly** and rely on the owner's `npm run build`, their screenshots and the Supabase check query.
 * Before handing over a zip: apply it onto a clean copy of the owner's project (their `package.json` kept) and run `npm test`; syntax-check changed `.ts/.tsx`; type-check pure libs with target ES2017.
 * Test fakes: a small fake Supabase client (chained `select/eq/order/limit/insert`) in `tests/reminders.test.ts`. **Rows must carry every column a query filters on** (adding `.eq("contributes", true)` to a query means the fake rows need `contributes: true`).
@@ -312,17 +314,17 @@ Warm paper, ink, hairline rules, one accent. CSS variables in `app/globals.css` 
 
 ## 14. THE NEXT WORK (do these in order; one batch, files written once)
 
-**Owner request (23 Oct 2026, from a screenshot of the join form):** the "add yourself" form is broken and incomplete, and these were asked for. Status: item 0 is fixed (v9.1); the rest is designed, not built.
+**Owner request (23 Oct 2026, from a screenshot of the join form):** the "add yourself" form is broken and incomplete, and these were asked for. Status: item 0 fixed (v9.1); items 1, 2 and 4 built in v9.5 (the first-visit form); items 3, 5, 6 (partly), 7, 8, 9 not built.
 
 0. **Bug (fixed in v9.1 in `lib/family-tree.ts`):** `sanitizeNodePatch` used to treat `undefined` keys as sent, so joining failed with "Spouse name must be text...". Still make sure `app/api/tree/connect/route.ts` and the forms only send defined fields.
 
-1. **`db/009_family_profile.sql` (idempotent, with a check query; was 008 before v9.2):** `alter table members add column if not exists contributes boolean not null default true;` and on `family_nodes`: `education jsonb not null default '[]'::jsonb`, `work jsonb not null default '[]'::jsonb`, `residence jsonb`. Then add `education, work, residence` to `NODE_COLUMNS` in `lib/tree-data.ts` **only after the owner has run 009**.
+1. **`db/009_family_profile.sql` (BUILT v9.5, file in `db/`; the owner must run it BEFORE the code goes online):** adds `family_nodes.education`, `work`, `residence`, `profile_completed_at` and `members.contributes` (default true, unused until item 5). `NODE_COLUMNS` already reads the new columns, so the site breaks until it has been run. Check query: four `true` values.
 
-2. **Join form rewrite** (`ConnectToTree` in `components/FamilyTree.tsx` + `app/api/tree/connect/route.ts`): name read-only from the member record; **date of birth required** with a "Show to the family" toggle (hidden fields are still stored); **parent required** with **no preselected default** (a placeholder "Choose..."; the old form defaulted to a wrong person); an option **"My parent is not listed: add them"** (parent name + date of birth or an approximate date); claim-an-existing-entry flow still offered (require a DOB if that entry has none); "start the tree" when empty. Enforce on the server with a new pure `newPersonProblem(patch, { own })` in `lib/family-tree.ts` (to be written: needs a name; `own: true` needs the exact `dateOfBirth`; someone else's entry may use an approximate `birthdate` text instead) and `hasBirth(p)`; `PATCH` must never clear an existing birth date. Optional photo.
+2. **Join form rewrite (BUILT v9.5 as the first-visit details form):** the first time a member opens the tree (no entry yet, or an entry whose `profile_completed_at` is null) they get `components/TreeOnboarding.tsx`. No entry: step 1 "Is one of these you?" (claim via `/api/tree/connect`, claim only) or "None of these is me: add me". Then the form, **pre-filled** when they have an entry: date of birth required (+ show tick), parent required with no preselected default (placeholder, "My parent is not listed: add them" with name + date of birth or approximate, "I am at the top of the tree" only for someone with an entry or an empty tree), phone, education, work, residence, spouse, about, photo; each with a "Show to the family" tick. A parent already in the tree is shown, not asked. Saved by `/api/tree/onboard` (rules in `lib/onboarding.ts`, name and links never taken from the browser), which sets `profile_completed_at`, so they are asked once. No skip button: date of birth and a parent are required. Every existing member is asked once, because every `profile_completed_at` starts null.
 
 3. **"My information" section under the tree** (visible without clicking your card): an always-editable form for the member's own entry (photo, date of birth + show toggle, phone, education, work, residence, spouse) with Save, and **buttons "Add my child", "Add my spouse", "Add my parent"** (the last only if there is no parent) above/beside it. Spouse stays quiet and optional (name + short details, stored in `spouse_name` / `spouse_details`).
 
-4. **Structured profile editors** in a new `components/ProfileFields.tsx`, used by the own-info form AND the edit/add-person form (replace the free-text work/bio fields; show any legacy `work_education`/`bio` text as an "older note"):
+4. **Structured profile editors (BUILT v9.5)** in `components/ProfileFields.tsx`, used by the first-visit form AND the edit/add-person form (the free-text work field is replaced; an old `work_education` note shows as "Older note", `bio` stays free text). Education/work up to 8 entries, residence with Kenya's counties; suggestions are the static lists (the family's own entries are not yet added to them). The card shows the three as readable lines. Original design notes:
    * **Education** (up to 8 entries): level (select: `EDUCATION_LEVELS`), institution (**`<input list>` datalist** suggestions from `INSTITUTIONS` + institutions already used by the family; free typing allowed), course (free, optional), start and end month (`<input type="month">`), "currently studying" checkbox.
    * **Work** (up to 8): status (select: `WORK_STATUSES`), employer (datalist from the family's entries), job title (datalist from `JOB_TITLES`), sector (select: `SECTORS`), start/end month, "current" checkbox.
    * **Residence**: country (datalist, **Kenya default**), then region (datalist of the 47 Kenyan counties when the country is Kenya, free text for other countries), then town/area (free text). Everything not in a list can be typed.
@@ -331,7 +333,7 @@ Warm paper, ink, hairline rules, one accent. CSS variables in `app/globals.css` 
 
 5. **Family-only (non-contributing) members (D26):** `members.contributes`. They can log in (name + phone) and use the tree and chat but not the ledger. Server: add `lib/access.ts` `memberContributes(db, memberId)`; in `app/api/dashboard/route.ts` and `app/api/ledger/full/route.ts` refuse (403) a member who does not contribute (admins exempt via `getAdminContext`) and filter the members query with `.eq("contributes", true)`; `app/page.tsx` and `app/ledger/page.tsx` redirect them to `/tree`; `AppNav` hides "Dashboard" for them; `lib/messaging.ts` members query adds `.eq("contributes", true)` (reminders and reports ignore them; **update the fake-DB rows in `tests/reminders.test.ts` with `contributes: true`**). Admin: Members tab gets a "Contributes monthly" checkbox on add and edit, a "Family only" badge, and when switching someone ON the admin sets the **start month** (`joined_on`, first of a month); `POST/PATCH /api/admin/members` accept `contributes`. The admin adds family-only members (name + phone) so they can log in. Document in `docs/GO-LIVE.md`.
 
-6. **Tests** for every rule above (access guard strings in `tests/session-token.test.ts`, new-person rules, profile, contributes filtering in the fake-DB tests), a stacked-zip verification, README and GO-LIVE updates, and the owner's "Apply it" message (SQL 009 first).
+6. **Tests** (done for items 1, 2, 4 in v9.5: `tests/family-tree.test.ts` and `tests/session-token.test.ts`; still needed for 3 and 5) for every rule above (access guard strings in `tests/session-token.test.ts`, new-person rules, profile, contributes filtering in the fake-DB tests), a stacked-zip verification, README and GO-LIVE updates, and the owner's "Apply it" message (SQL 009 first).
 
 7. Optional polish: sort siblings by an approximate year when only an approximate birth is known; allow a second parent link if the owner wants both parents as entries.
 
@@ -360,6 +362,7 @@ Warm paper, ink, hairline rules, one accent. CSS variables in `app/globals.css` 
 
 ## 16. CHANGELOG (compact, newest first)
 
+* **v9.5 (11 Nov 2026):** **first-visit details form for the family tree**: a member is asked once (no entry yet, or an uncompleted entry, which comes pre-filled) for date of birth, parent and optional phone/education/work/residence/spouse/about, each with a "Show to the family" tick; structured education/work/residence editors; `db/009`; `/api/tree/onboard`; `/api/tree/connect` now only claims an entry; `needsProfile` in `/api/tree`; the card shows the new details. 310 tests.
 * **v9.4 (11 Nov 2026):** **Africa's Talking and all app-sent texts removed** (see 3.4 for the list). The Reminders tab is now a WhatsApp/Copy list; the daily cron is keep-alive only; the Health tab loses the SMS and import-alert lines; Setup loses the alert phone and the "hold automatic texts" wording (the stale-data limit stays as a warning). `db` unchanged. 301 tests.
 * **v9.3 (11 Nov 2026):** Cancel out accepts a **hanging fee** (its deposit already erased) against a deposit paid in to cover it; leftover over KES 1 is allowed only in that case and is kept as plain other income. `lib/cancel-out.ts` (`orphanFee`, `leftoverIsRounding`), cancel-out route (`hangingFees`, server-decided), panel lists hanging fees. 322 tests.
 * **v9.2 (11 Nov 2026):** **cancel out without a trace**: also erases the M-PESA fee charged on the deposit; deposit - fee must equal the withdrawal, cents of rounding kept as one "Rounding" line; no `job_runs` audit; erased receipt numbers kept in `import_skip_receipts` so old statements cannot resurrect them (statement import skips them); tool shown only to the superadmin (`AdminShell`/`PaymentsManager` get `isSuperAdmin`); `db/008` (also copies receipts from old cancel_out records and deletes those records); family-profile migration renumbered to `db/009`. 320 tests.

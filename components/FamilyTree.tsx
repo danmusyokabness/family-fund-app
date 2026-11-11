@@ -22,87 +22,19 @@ import {
   generationOf,
   MAX_ZOOM,
   MIN_ZOOM,
-  rankClaimCandidates,
-  rankParentCandidates,
   type PublicTreeNode,
   type TreeBranch,
-  type TreeNode,
 } from "@/lib/family-tree";
-
-interface TreeData {
-  nodes: PublicTreeNode[];
-  me: { memberId: string | null; name: string; nodeId: string | null };
-  isAdmin: boolean;
-  editableIds: string[];
-  addChildIds: string[];
-  canAddParent: boolean;
-  needsToConnect: boolean;
-}
+import { asTreeNodes, born, initials, Photo, shrinkPhoto, type TreeData } from "./tree-common";
+import TreeOnboarding from "./TreeOnboarding";
+import { dropBlankEducation, dropBlankWork, EducationEditor, ResidenceEditor, WorkEditor } from "./ProfileFields";
+import type { EducationEntry, Residence, WorkEntry } from "@/lib/profile";
+import { describeEducation, describeResidence, describeWork } from "@/lib/profile";
 
 // useLayoutEffect on the page, plain useEffect while the server prepares the first view (where layout effects do nothing).
 const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 const GENERATION_NAMES = ["Oldest generation", "Their children", "Next generation", "Next generation", "Next generation", "Next generation", "Next generation", "Next generation"];
-
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-function born(node: PublicTreeNode): string | null {
-  if (node.dateOfBirth) {
-    const [y, m, d] = node.dateOfBirth.split("-").map(Number);
-    const now = new Date();
-    let age = now.getFullYear() - y;
-    if (now.getMonth() + 1 < m || (now.getMonth() + 1 === m && now.getDate() < d)) age--;
-    return `Born ${d} ${MONTHS[m - 1]} ${y} (${age})`;
-  }
-  return node.birthdate ? `Born ${node.birthdate}` : null;
-}
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
-}
-
-/** The nodes as the pure tree functions expect them. */
-function asTreeNodes(nodes: PublicTreeNode[]): TreeNode[] {
-  return nodes.map((n) => ({ ...n, deletedAt: null }));
-}
-
-/** Shrinks a chosen picture to a small square JPEG in the browser, so only a few kilobytes are stored. */
-async function shrinkPhoto(file: File): Promise<string> {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const el = new Image();
-      el.onload = () => resolve(el);
-      el.onerror = () => reject(new Error("That picture could not be opened."));
-      el.src = url;
-    });
-    const size = 200;
-    const canvas = document.createElement("canvas");
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("Your browser cannot prepare pictures.");
-    const side = Math.min(img.width, img.height);
-    ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size);
-    return canvas.toDataURL("image/jpeg", 0.82);
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
-function Photo({ node, size = 46 }: { node: PublicTreeNode; size?: number }) {
-  const style = { width: size, height: size, fontSize: Math.round(size / 3) };
-  if (node.hasPhoto) {
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img className="fphoto" style={style} src={`/api/tree/${node.id}/photo?v=${encodeURIComponent(node.updatedAt)}`} alt="" />;
-  }
-  return (
-    <span className="fphoto" style={style} aria-hidden>
-      {initials(node.name)}
-    </span>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Add / edit form
@@ -119,7 +51,9 @@ function PersonForm({ editing, data, onDone, onCancel }: { editing: Editing; dat
   const [spouseDetails, setSpouseDetails] = useState(existing?.spouseDetails ?? "");
   const [dateOfBirth, setDateOfBirth] = useState(existing?.dateOfBirth ?? "");
   const [birthdate, setBirthdate] = useState(existing?.birthdate ?? "");
-  const [workEducation, setWorkEducation] = useState(existing?.workEducation ?? "");
+  const [education, setEducation] = useState<EducationEntry[]>(existing?.education ?? []);
+  const [work, setWork] = useState<WorkEntry[]>(existing?.work ?? []);
+  const [residence, setResidence] = useState<Residence | null>(existing?.residence ?? null);
   const [bio, setBio] = useState(existing?.bio ?? "");
   const [phone, setPhone] = useState(existing?.phone ?? "");
   const [hidden, setHidden] = useState<Set<string>>(new Set(existing?.hiddenFields ?? []));
@@ -164,7 +98,9 @@ function PersonForm({ editing, data, onDone, onCancel }: { editing: Editing; dat
       spouseDetails,
       dateOfBirth,
       birthdate,
-      workEducation,
+      education: dropBlankEducation(education),
+      work: dropBlankWork(work),
+      residence,
       bio,
       phone,
       hiddenFields: [...hidden],
@@ -270,12 +206,28 @@ function PersonForm({ editing, data, onDone, onCancel }: { editing: Editing; dat
         </label>
       </div>
 
-      <div>
-        <label className="block text-xs text-ink-soft">
-          Work or education
-          <input value={workEducation} onChange={(e) => setWorkEducation(e.target.value)} className={input} />
-        </label>
-        {visibleBox("workEducation")}
+      {existing?.workEducation && (
+        <p className="rounded-md border border-line px-3 py-2 text-xs text-ink-soft">
+          Older note about work and education: {existing.workEducation}
+        </p>
+      )}
+
+      <div className="space-y-1">
+        <p className="text-xs text-ink-soft">Where they studied</p>
+        <EducationEditor value={education} onChange={setEducation} />
+        {visibleBox("education")}
+      </div>
+
+      <div className="space-y-1">
+        <p className="text-xs text-ink-soft">Work</p>
+        <WorkEditor value={work} onChange={setWork} />
+        {visibleBox("work")}
+      </div>
+
+      <div className="space-y-1">
+        <p className="text-xs text-ink-soft">Where they live</p>
+        <ResidenceEditor value={residence} onChange={setResidence} />
+        {visibleBox("residence")}
       </div>
 
       <div>
@@ -357,96 +309,6 @@ function PersonForm({ editing, data, onDone, onCancel }: { editing: Editing; dat
           Cancel
         </button>
       </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// First visit: say where you are in the family (decision D20)
-// ---------------------------------------------------------------------------
-function ConnectToTree({ data, onDone }: { data: TreeData; onDone: () => void }) {
-  const all = useMemo(() => asTreeNodes(data.nodes), [data.nodes]);
-  const claims = useMemo(() => rankClaimCandidates(all, data.me.name).slice(0, 5), [all, data.me.name]);
-  const parents = useMemo(() => rankParentCandidates(all, data.me.name), [all, data.me.name]);
-  const [parentId, setParentId] = useState(parents[0]?.id ?? "");
-  const [dateOfBirth, setDateOfBirth] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function connect(body: Record<string, unknown>) {
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/tree/connect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error ?? "Could not connect you.");
-      onDone();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not connect you.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="space-y-5">
-      <div>
-        <h1 className="font-serif text-2xl font-semibold">Where are you in the family?</h1>
-        <p className="mt-1 text-sm text-ink-soft">
-          Before you look around, please find your place in the family tree, so everyone is connected. This only takes a moment, and you can change your details afterwards.
-        </p>
-      </div>
-
-      {error && <p className="text-sm text-danger">{error}</p>}
-
-      {claims.length > 0 && (
-        <div className="paper-card space-y-2 p-4">
-          <h2 className="font-medium">Is one of these you?</h2>
-          {claims.map((n) => (
-            <div key={n.id} className="flex items-center justify-between gap-3 text-sm">
-              <span className="flex items-center gap-2">
-                <Photo node={n} size={32} />
-                {n.name}
-                {born(n) && <span className="text-xs text-ink-soft">{born(n)}</span>}
-              </span>
-              <button type="button" disabled={busy} onClick={() => connect({ claimNodeId: n.id })} className="btn-secondary px-3 py-1 text-xs">
-                That&apos;s me
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {data.nodes.length === 0 ? (
-        <div className="paper-card space-y-2 p-4">
-          <h2 className="font-medium">The tree is empty</h2>
-          <p className="text-sm text-ink-soft">You can start it. Others will be added around you.</p>
-          <button type="button" disabled={busy} onClick={() => connect({ asRoot: true })} className="btn-primary px-4 py-1.5 text-sm">
-            Start the tree with me
-          </button>
-        </div>
-      ) : (
-        <div className="paper-card space-y-3 p-4">
-          <h2 className="font-medium">{claims.length > 0 ? "Otherwise, add yourself" : "Add yourself"}</h2>
-          <label className="block text-xs text-ink-soft">
-            Whose child are you? (the most likely parents are listed first)
-            <select value={parentId} onChange={(e) => setParentId(e.target.value)} className="mt-1 w-full rounded-md border border-line px-3 py-2 text-sm">
-              {parents.map((n) => (
-                <option key={n.id} value={n.id}>
-                  {n.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block text-xs text-ink-soft">
-            Your date of birth (optional, it helps put the family in order)
-            <input type="date" value={dateOfBirth} onChange={(e) => setDateOfBirth(e.target.value)} className="mt-1 w-full rounded-md border border-line px-3 py-2 text-sm" />
-          </label>
-          <button type="button" disabled={busy || !parentId} onClick={() => connect({ parentId, dateOfBirth })} className="btn-primary px-4 py-1.5 text-sm">
-            Add me to the tree
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -622,8 +484,8 @@ export default function FamilyTree() {
 
   if (!data) return <p className="text-ink-soft">{error ?? "Loading..."}</p>;
 
-  if (data.needsToConnect) {
-    return <ConnectToTree data={data} onDone={load} />;
+  if (data.needsToConnect || data.needsProfile) {
+    return <TreeOnboarding data={data} onDone={load} />;
   }
 
   const editable = new Set(data.editableIds);
@@ -750,7 +612,24 @@ export default function FamilyTree() {
                   </div>
 
                   {born(selected) && <p>{born(selected)}</p>}
-                  {selected.workEducation && <p>{selected.workEducation}</p>}
+                  {selected.education.length > 0 && (
+                    <div>
+                      <p className="text-xs text-ink-soft">Education</p>
+                      {selected.education.map((e, i) => (
+                        <p key={i}>{describeEducation(e)}</p>
+                      ))}
+                    </div>
+                  )}
+                  {selected.work.length > 0 && (
+                    <div>
+                      <p className="text-xs text-ink-soft">Work</p>
+                      {selected.work.map((w, i) => (
+                        <p key={i}>{describeWork(w)}</p>
+                      ))}
+                    </div>
+                  )}
+                  {selected.residence && describeResidence(selected.residence) && <p>Lives in {describeResidence(selected.residence)}</p>}
+                  {selected.workEducation && <p className="text-xs text-ink-soft">{selected.workEducation}</p>}
                   {selected.bio && <p className="whitespace-pre-wrap text-ink-soft">{selected.bio}</p>}
                   {selected.phone && (
                     <p>

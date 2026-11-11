@@ -3,15 +3,16 @@ import assert from "node:assert/strict";
 import {
   buildForest, wouldCreateCycle, ancestorIds, descendantIds, sanitizeNodePatch, changedFields, nameSimilarity,
   rankClaimCandidates, rankParentCandidates, needsToConnect, editableNodeIds, addChildTargetIds, viewForViewer, withRanks,
-  nodeFromRow, rowFromPatch, HIDEABLE_FIELDS, type TreeNode, type TreeRow,
+  nodeFromRow, rowFromPatch, HIDEABLE_FIELDS, needsProfile, type TreeNode, type TreeRow,
 } from "../lib/family-tree.ts";
+import { planOnboarding } from "../lib/onboarding.ts";
 
 let counter = 0;
 function node(partial: Partial<TreeNode> & { id: string; name: string }): TreeNode {
   counter++;
   return {
     spouseName: null, spouseDetails: null, parentId: null, spouseId: null, memberId: null, dateOfBirth: null, birthdate: null,
-    workEducation: null, bio: null, phone: null, hiddenFields: [], hasPhoto: false, deletedAt: null,
+    workEducation: null, education: [], work: [], residence: null, bio: null, phone: null, hiddenFields: [], hasPhoto: false, profileCompletedAt: null, deletedAt: null,
     createdAt: `2026-01-01T00:00:${String(counter).padStart(2, "0")}.000Z`, updatedAt: `2026-01-01T00:00:${String(counter).padStart(2, "0")}.000Z`,
     ...partial,
   };
@@ -194,7 +195,7 @@ test("nothing is hidden unless the person chose to, so a phone number is visible
 });
 
 test("only real, hideable details can be hidden; the name and photo can never be hidden", () => {
-  assert.deepEqual([...HIDEABLE_FIELDS], ["phone", "dateOfBirth", "birthdate", "workEducation", "bio", "spouseName", "spouseDetails"]);
+  assert.deepEqual([...HIDEABLE_FIELDS], ["phone", "dateOfBirth", "birthdate", "workEducation", "education", "work", "residence", "bio", "spouseName", "spouseDetails"]);
   assert.deepEqual(sanitizeNodePatch({ hiddenFields: ["phone", "bio", "phone"] }, "2026-10-21"), { ok: true, patch: { hiddenFields: ["phone", "bio"] } });
   assert.equal(sanitizeNodePatch({ hiddenFields: ["name"] }, "2026-10-21").ok, false);
   assert.equal(sanitizeNodePatch({ hiddenFields: "phone" }, "2026-10-21").ok, false);
@@ -220,7 +221,7 @@ test("everyone sees the same eldest-first order, even when a birth date is hidde
 
 const ROW: TreeRow = {
   id: "n1", name: "Jane Doe", spouse_name: "John Doe", spouse_details: "Teacher", parent_id: "p1", spouse_id: null, member_id: "m1", date_of_birth: "1961-03-27",
-  birthdate: null, work_education: "Teacher", bio: "Hello", phone: "254700000001", hidden_fields: ["phone"], has_photo: true, deleted_at: null,
+  birthdate: null, work_education: "Teacher", education: null, work: null, residence: null, bio: "Hello", phone: "254700000001", hidden_fields: ["phone"], has_photo: true, profile_completed_at: null, deleted_at: null,
   created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-02-01T00:00:00.000Z",
 };
 
@@ -359,3 +360,107 @@ test("the option lists: Kenya is the default country with its 47 counties; other
   assert.deepEqual(regionsFor("kenya"), KENYA_COUNTIES);
   assert.deepEqual(regionsFor("Canada"), []);
 });
+
+// ---------------------------------------------------------------------
+// First visit: education, work, residence, and the details form's rules
+// ---------------------------------------------------------------------
+const EDU = { level: "Bachelor's degree", institution: "University of Nairobi", course: "BSc Computer Science", startMonth: "2014-09", endMonth: "2018-12", current: false };
+const JOB = { status: "Employed", employer: "Kenya Power", title: "Engineer", sector: "Energy and mining", startMonth: "2020-02", endMonth: null, current: true };
+const HOME = { country: "Kenya", region: "Nairobi", place: "Kasarani" };
+
+test("tree edits accept education, work and residence (checked), and never accept the 'details done' mark from a request", () => {
+  const ok = sanitizeNodePatch({ education: [EDU], work: [JOB], residence: HOME }, "2026-11-11");
+  assert.deepEqual(ok, { ok: true, patch: { education: [EDU], work: [JOB], residence: HOME } });
+  assert.equal(sanitizeNodePatch({ education: [{ level: "Wizard school", institution: "X" }] }, "2026-11-11").ok, false);
+  assert.equal(sanitizeNodePatch({ work: "none" }, "2026-11-11").ok, false);
+  assert.equal(sanitizeNodePatch({ residence: { region: "Nairobi" } }, "2026-11-11").ok, false);
+  assert.deepEqual(sanitizeNodePatch({ residence: null }, "2026-11-11"), { ok: true, patch: { residence: null } });
+  assert.deepEqual(sanitizeNodePatch({ profileCompletedAt: "2026-01-01T00:00:00Z", memberId: "x" }, "2026-11-11"), { ok: true, patch: {} });
+  assert.deepEqual(sanitizeNodePatch({ education: undefined, work: undefined, residence: undefined }, "2026-11-11"), { ok: true, patch: {} });
+  assert.equal(sanitizeNodePatch({ hiddenFields: ["education", "work", "residence"] }, "2026-11-11").ok, true);
+});
+
+test("hiding education, work or residence blanks them for the family, and the owner and editors still see them", () => {
+  const person = node({ id: "p", name: "Pat", education: [EDU], work: [JOB], residence: HOME, hiddenFields: ["education", "residence"] });
+  const family = viewForViewer(person, false);
+  assert.deepEqual(family.education, []);
+  assert.equal(family.residence, null);
+  assert.deepEqual(family.work, [JOB]);
+  assert.deepEqual(family.hiddenFields, []);
+  const owner = viewForViewer(person, true);
+  assert.deepEqual(owner.education, [EDU]);
+  assert.deepEqual(owner.residence, HOME);
+});
+
+test("an edit that changes education, work or residence counts as a change, and the same entries do not", () => {
+  assert.deepEqual(changedFields({ education: [EDU] }, { education: [{ ...EDU, institution: "Moi University" }] }), ["education"]);
+  assert.deepEqual(changedFields({ education: [EDU] }, { education: [{ ...EDU }] }), []);
+  assert.deepEqual(changedFields({ work: [] }, { work: [JOB] }), ["work"]);
+  assert.deepEqual(changedFields({ residence: null }, { residence: HOME }), ["residence"]);
+  assert.deepEqual(changedFields({ residence: HOME }, { residence: { ...HOME } }), []);
+  assert.deepEqual(changedFields({ profileCompletedAt: null }, { profileCompletedAt: "2026-11-11T08:00:00.000Z" }), ["profileCompletedAt"]);
+});
+
+test("rows from before the migration have empty education, work and residence; the new columns map both ways", () => {
+  const old = nodeFromRow(ROW);
+  assert.deepEqual([old.education, old.work, old.residence, old.profileCompletedAt], [[], [], null, null]);
+  const filled = nodeFromRow({ ...ROW, education: [EDU], work: [JOB], residence: HOME, profile_completed_at: "2026-11-11T08:00:00.000Z" });
+  assert.deepEqual([filled.education, filled.work, filled.residence, filled.profileCompletedAt], [[EDU], [JOB], HOME, "2026-11-11T08:00:00.000Z"]);
+  assert.deepEqual(rowFromPatch({ education: [EDU], residence: null, profileCompletedAt: "x" }), { education: [EDU], residence: null, profile_completed_at: "x" });
+  for (const field of ["education", "work", "residence"]) assert.ok((HIDEABLE_FIELDS as readonly string[]).includes(field));
+});
+
+test("a member is asked for their details once: when they have no entry, or their entry was never completed", () => {
+  assert.equal(needsProfile([], "m1"), true);
+  assert.equal(needsProfile([node({ id: "1", name: "X", memberId: "m1" })], "m1"), true); // in the tree, never completed: pre-filled form
+  assert.equal(needsProfile([node({ id: "1", name: "X", memberId: "m1", profileCompletedAt: "2026-11-11T08:00:00.000Z" })], "m1"), false);
+  assert.equal(needsProfile([node({ id: "1", name: "X", memberId: "m1", deletedAt: "2026-10-01T00:00:00.000Z", profileCompletedAt: "2026-11-11T08:00:00.000Z" })], "m1"), true);
+  assert.equal(needsProfile([node({ id: "1", name: "X", memberId: "m2" })], "m1"), true); // someone else's entry does not count
+});
+
+test("the details form: date of birth is required (an existing one counts), and a parent already in the tree is kept", () => {
+  const dad = node({ id: "dad", name: "Dad" });
+  const me = node({ id: "me", name: "Me", memberId: "m1", parentId: "dad", dateOfBirth: "1990-04-04" });
+  const nodes = [dad, me];
+  assert.deepEqual(planOnboarding({ nodes, mine: me, patch: {}, parent: undefined, today: "2026-11-11" }), { ok: true, parent: { kind: "keep" } });
+  // the form clearing the date of birth is not allowed
+  const cleared = planOnboarding({ nodes, mine: me, patch: { dateOfBirth: null }, parent: undefined, today: "2026-11-11" });
+  assert.equal(cleared.ok, false);
+  // no date anywhere: refused
+  const bare = node({ id: "me2", name: "Me2", memberId: "m2", parentId: "dad" });
+  assert.equal(planOnboarding({ nodes: [dad, bare], mine: bare, patch: {}, parent: undefined, today: "2026-11-11" }).ok, false);
+  assert.equal(planOnboarding({ nodes: [dad, bare], mine: bare, patch: { dateOfBirth: "1991-01-01" }, parent: undefined, today: "2026-11-11" }).ok, true);
+});
+
+test("the details form: a new member must choose a parent, add one, or (only at the top or in an empty tree) say they are at the top", () => {
+  const dad = node({ id: "dad", name: "Dad" });
+  const patch = { dateOfBirth: "1990-04-04" };
+  const today = "2026-11-11";
+  // nothing chosen
+  assert.equal(planOnboarding({ nodes: [dad], mine: null, patch, parent: undefined, today }).ok, false);
+  assert.equal(planOnboarding({ nodes: [dad], mine: null, patch, parent: { id: "" }, today }).ok, false);
+  // an existing person, or one that does not exist
+  assert.deepEqual(planOnboarding({ nodes: [dad], mine: null, patch, parent: { id: "dad" }, today }), { ok: true, parent: { kind: "existing", id: "dad" } });
+  assert.equal(planOnboarding({ nodes: [dad], mine: null, patch, parent: { id: "ghost" }, today }).ok, false);
+  // "my parent is not listed": needs a name and a date of birth or an approximate one
+  const added = planOnboarding({ nodes: [dad], mine: null, patch, parent: { newParent: { name: "Mum", dateOfBirth: "1960-01-01" } }, today });
+  assert.deepEqual(added, { ok: true, parent: { kind: "new", patch: { name: "Mum", dateOfBirth: "1960-01-01" } } });
+  assert.equal(planOnboarding({ nodes: [dad], mine: null, patch, parent: { newParent: { name: "Mum", birthdate: "around 1960" } }, today }).ok, true);
+  assert.equal(planOnboarding({ nodes: [dad], mine: null, patch, parent: { newParent: { name: "Mum" } }, today }).ok, false);
+  assert.equal(planOnboarding({ nodes: [dad], mine: null, patch, parent: { newParent: { name: "", dateOfBirth: "1960-01-01" } }, today }).ok, false);
+  assert.equal(planOnboarding({ nodes: [dad], mine: null, patch, parent: { newParent: { name: "Mum", dateOfBirth: "2999-01-01" } }, today }).ok, false);
+  // the top of the tree: only the very first person, or someone already without a parent
+  assert.equal(planOnboarding({ nodes: [dad], mine: null, patch, parent: { top: true }, today }).ok, false);
+  assert.deepEqual(planOnboarding({ nodes: [], mine: null, patch, parent: { top: true }, today }), { ok: true, parent: { kind: "top" } });
+  const root = node({ id: "root", name: "Root", memberId: "m9", dateOfBirth: "1950-01-01" });
+  assert.deepEqual(planOnboarding({ nodes: [root], mine: root, patch: {}, parent: { top: true }, today }), { ok: true, parent: { kind: "top" } });
+});
+
+test("the details form: someone who already has an entry cannot choose themselves or their own descendant as their parent", () => {
+  const root = node({ id: "root", name: "Root", memberId: "m1", dateOfBirth: "1950-01-01" });
+  const kid = node({ id: "kid", name: "Kid", parentId: "root" });
+  const today = "2026-11-11";
+  assert.equal(planOnboarding({ nodes: [root, kid], mine: root, patch: {}, parent: { id: "root" }, today }).ok, false);
+  assert.equal(planOnboarding({ nodes: [root, kid], mine: root, patch: {}, parent: { id: "kid" }, today }).ok, false);
+});
+

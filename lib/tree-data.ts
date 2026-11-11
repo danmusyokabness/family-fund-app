@@ -9,7 +9,7 @@ import type { Actor } from "./actors.ts";
 
 /** Every column EXCEPT the photo itself, which is large and fetched separately. */
 export const NODE_COLUMNS =
-  "id, name, spouse_name, spouse_details, parent_id, spouse_id, member_id, date_of_birth, birthdate, work_education, bio, phone, hidden_fields, has_photo, deleted_at, created_at, updated_at";
+  "id, name, spouse_name, spouse_details, parent_id, spouse_id, member_id, date_of_birth, birthdate, work_education, education, work, residence, bio, phone, hidden_fields, has_photo, profile_completed_at, deleted_at, created_at, updated_at";
 
 /** Every person in the tree who has not been removed. */
 export async function loadLiveNodes(db: SupabaseClient): Promise<TreeNode[]> {

@@ -13,9 +13,13 @@
 // plain data. The API routes call these functions.
 
 import { normalizePhone } from "./phone.ts";
+import { sanitizeEducation, sanitizeResidence, sanitizeWork, type EducationEntry, type Residence, type WorkEntry } from "./profile.ts";
 
 /** Details a person can choose to hide from the rest of the family. Name and photo are always shown. */
-export const HIDEABLE_FIELDS = ["phone", "dateOfBirth", "birthdate", "workEducation", "bio", "spouseName", "spouseDetails"] as const;
+export const HIDEABLE_FIELDS = ["phone", "dateOfBirth", "birthdate", "workEducation", "education", "work", "residence", "bio", "spouseName", "spouseDetails"] as const;
+
+/** The hideable details that are lists or objects rather than text: a hidden one is shown as empty, not as null. */
+const LIST_FIELDS = ["education", "work"] as const;
 export type HideableField = (typeof HIDEABLE_FIELDS)[number];
 
 export interface TreeNode {
@@ -30,12 +34,19 @@ export interface TreeNode {
   /** "YYYY-MM-DD" or null. The sort key for "eldest first". */
   dateOfBirth: string | null;
   birthdate: string | null; // free text, for approximate dates
+  /** The older free-text note about work and education (kept as it was; new details go in the three lists below). */
   workEducation: string | null;
+  /** Where they studied, where they work and where they live. */
+  education: EducationEntry[];
+  work: WorkEntry[];
+  residence: Residence | null;
   bio: string | null;
   phone: string | null;
   /** The details this person has chosen NOT to show to the rest of the family. */
   hiddenFields: string[];
   hasPhoto: boolean;
+  /** When this person first filled in (or confirmed) their details; null until they have. Members are asked once. */
+  profileCompletedAt: string | null;
   deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -206,7 +217,8 @@ export function viewForViewer(node: TreeNode, canSeeHidden: boolean): PublicTree
   if (canSeeHidden) return { ...rest };
   const view: PublicTreeNode = { ...rest, hiddenFields: [] };
   for (const field of node.hiddenFields) {
-    if ((HIDEABLE_FIELDS as readonly string[]).includes(field)) (view as unknown as Record<string, unknown>)[field] = null;
+    if (!(HIDEABLE_FIELDS as readonly string[]).includes(field)) continue;
+    (view as unknown as Record<string, unknown>)[field] = (LIST_FIELDS as readonly string[]).includes(field) ? [] : null;
   }
   return view;
 }
@@ -223,9 +235,14 @@ export interface NodePatch {
   dateOfBirth?: string | null;
   birthdate?: string | null;
   workEducation?: string | null;
+  education?: EducationEntry[];
+  work?: WorkEntry[];
+  residence?: Residence | null;
   bio?: string | null;
   phone?: string | null;
   hiddenFields?: string[];
+  /** Set by the server when someone completes their details; never accepted from a request. */
+  profileCompletedAt?: string | null;
 }
 
 export type PatchResult = { ok: true; patch: NodePatch } | { ok: false; errors: string[] };
@@ -290,6 +307,23 @@ export function sanitizeNodePatch(input: Record<string, unknown>, today: string)
     else patch.dateOfBirth = v;
   }
 
+  const currentMonth = today.slice(0, 7);
+  if (has("education")) {
+    const r = sanitizeEducation(input.education, currentMonth);
+    if (r.ok) patch.education = r.value;
+    else errors.push(r.error);
+  }
+  if (has("work")) {
+    const r = sanitizeWork(input.work, currentMonth);
+    if (r.ok) patch.work = r.value;
+    else errors.push(r.error);
+  }
+  if (has("residence")) {
+    const r = sanitizeResidence(input.residence);
+    if (r.ok) patch.residence = r.value;
+    else errors.push(r.error);
+  }
+
   if (has("phone")) {
     const v = input.phone;
     if (v === null || v === "") patch.phone = null;
@@ -332,17 +366,25 @@ const TRACKED: (keyof TreeNode)[] = [
   "dateOfBirth",
   "birthdate",
   "workEducation",
+  "education",
+  "work",
+  "residence",
   "bio",
   "phone",
   "hiddenFields",
+  "profileCompletedAt",
 ];
 
 function same(a: unknown, b: unknown): boolean {
+  const isPlain = (v: unknown) => (Array.isArray(v) ? v.every((x) => typeof x === "string") : true);
   if (Array.isArray(a) || Array.isArray(b)) {
-    const x = [...((a as string[] | null | undefined) ?? [])].sort().join("|");
-    const y = [...((b as string[] | null | undefined) ?? [])].sort().join("|");
-    return x === y;
+    const x = ((a as unknown[] | null | undefined) ?? []);
+    const y = ((b as unknown[] | null | undefined) ?? []);
+    // A list of plain strings (hidden fields) is compared as a set; a list of entries (education, work) in its exact order.
+    if (isPlain(x) && isPlain(y)) return [...(x as string[])].sort().join("|") === [...(y as string[])].sort().join("|");
+    return JSON.stringify(x) === JSON.stringify(y);
   }
+  if (typeof a === "object" || typeof b === "object") return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
   return (a ?? null) === (b ?? null);
 }
 
@@ -397,6 +439,15 @@ export function rankParentCandidates(nodes: TreeNode[], memberName: string): Tre
     .map((x) => x.n);
 }
 
+/**
+ * True when this member still has to fill in their details: they have no entry yet,
+ * or their entry has never been completed. They are asked once (the first time they open the tree).
+ */
+export function needsProfile(nodes: TreeNode[], memberId: string): boolean {
+  const mine = nodes.find((n) => !n.deletedAt && n.memberId === memberId);
+  return !mine || !mine.profileCompletedAt;
+}
+
 /** True when this member still has to connect to the tree (D20). */
 export function needsToConnect(nodes: TreeNode[], memberId: string): boolean {
   return !nodes.some((n) => !n.deletedAt && n.memberId === memberId);
@@ -416,10 +467,14 @@ export interface TreeRow {
   date_of_birth: string | null;
   birthdate: string | null;
   work_education: string | null;
+  education: EducationEntry[] | null;
+  work: WorkEntry[] | null;
+  residence: Residence | null;
   bio: string | null;
   phone: string | null;
   hidden_fields: string[] | null;
   has_photo: boolean | null;
+  profile_completed_at: string | null;
   deleted_at: string | null;
   created_at: string;
   updated_at: string | null;
@@ -437,10 +492,14 @@ export function nodeFromRow(r: TreeRow): TreeNode {
     dateOfBirth: r.date_of_birth,
     birthdate: r.birthdate,
     workEducation: r.work_education,
+    education: Array.isArray(r.education) ? r.education : [],
+    work: Array.isArray(r.work) ? r.work : [],
+    residence: r.residence && typeof r.residence === "object" ? r.residence : null,
     bio: r.bio,
     phone: r.phone,
     hiddenFields: r.hidden_fields ?? [],
     hasPhoto: r.has_photo === true,
+    profileCompletedAt: r.profile_completed_at ?? null,
     deletedAt: r.deleted_at,
     createdAt: r.created_at,
     updatedAt: r.updated_at ?? r.created_at,
@@ -457,6 +516,10 @@ const COLUMN_OF: Record<string, string> = {
   dateOfBirth: "date_of_birth",
   birthdate: "birthdate",
   workEducation: "work_education",
+  education: "education",
+  work: "work",
+  residence: "residence",
+  profileCompletedAt: "profile_completed_at",
   bio: "bio",
   phone: "phone",
   hiddenFields: "hidden_fields",

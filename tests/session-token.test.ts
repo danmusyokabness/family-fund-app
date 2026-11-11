@@ -210,3 +210,19 @@ test("no text-message provider: Africa's Talking is gone from the code, nothing 
   assert.ok(!/sendMessages|sendAdminAlert/.test(cron), "the daily job must not send texts");
   assert.ok(cron.includes('from("settings")'), "the daily job must still run its keep-alive query");
 });
+
+test("first-visit details form: only members, the name and links come from the server, the rules are checked on the server, and the tree asks once", () => {
+  const route = read("app/api/tree/onboard/route.ts");
+  assert.ok(route.includes("getMemberSession"), "only a member fills in their own details");
+  assert.ok(route.includes("planOnboarding"), "the required details (date of birth, a parent) must be checked on the server");
+  assert.ok(/for \(const key of \["name", "memberId", "parentId", "spouseId", "profileCompletedAt"\]\) delete details\[key\]/.test(route), "the browser must never set the name, the links or the done mark");
+  assert.ok(route.includes("name: member.fullName"), "a new entry gets the member's own name");
+  assert.ok(route.includes("profile_completed_at"), "completing the form marks it done, so the member is asked only once");
+  const tree = read("app/api/tree/route.ts");
+  assert.ok(tree.includes("needsProfile"), "the tree API must tell the page whether the member still has to fill in their details");
+  const connect = read("app/api/tree/connect/route.ts");
+  assert.ok(!connect.includes("asRoot") && !connect.includes("insert("), "connecting can only take over an existing entry; adding yourself goes through the details form");
+  const view = read("components/FamilyTree.tsx");
+  assert.ok(view.includes("data.needsToConnect || data.needsProfile") && view.includes("<TreeOnboarding"), "the tree page must show the details form first when it is needed");
+});
+
