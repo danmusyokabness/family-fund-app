@@ -195,3 +195,20 @@ Record bank withdrawals and other expenses (not M-PESA charges, which come in wi
 ## What is not built yet
 
 * **Automatic M-PESA intake**: payments still arrive by importing a statement. A free option that keeps your Till (forwarding the payment SMS to the app) is being explored; it needs a few sample payment SMS from you. Daraja was dropped.
+
+---
+
+## PART 6. Check that everything is in place (any time)
+
+This reads your project and your live site and tells you what, if anything, is missing. It changes nothing and shows no secrets.
+
+1. Open **File Explorer**, go to your project folder, click the address bar, type `cmd` and press **Enter**.
+2. Run:
+
+```
+node scripts/check-done.mjs
+```
+
+3. Read the last line. **ALL CHECKS PASSED** means everything is in place. Each **FAIL** line includes the command that fixes it, and **SKIP** means that item could not be checked.
+4. Also run `npm test` (you should see `# fail 0`) and `npm run build` (no red "Failed to compile").
+

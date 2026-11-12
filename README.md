@@ -1,6 +1,29 @@
-# Family Emergency Fund Platform: Handover README (v9.7, 11 Nov 2026)
+# Family Emergency Fund Platform: Handover README (v10.0, 13 Nov 2026)
 
 > **This file is the single source of truth for continuing the project with any AI agent or developer.** It describes the app, the owner, the rules, the exact state of the work, and what to do next. **The code is the truth for what is implemented; this file is the truth for intent, decisions and rules.** Verify this README against the real code before changing anything.
+
+---
+
+## STATUS: PHASE 1 IS COMPLETE (13 Nov 2026)
+
+Everything that was planned is **built, delivered and confirmed working by the owner** ("all done successfully", 13 Nov 2026, after running `scripts/check-done.mjs`, `npm test` and `npm run build`). Nothing from the old to-do list remains open. The work after this point is **Phase 2**, which the owner has not defined yet: **ask the owner what it is** before building anything.
+
+**Closed by the owner's decision (do NOT reopen without them):**
+
+| Item | Decision |
+|---|---|
+| Africa's Talking / any app-sent SMS | **Removed** (v9.4). The shared route returned `UserInBlacklist` and a sender ID costs money. Reminders and reports are sent by hand with the WhatsApp buttons. |
+| Daraja (Safaricom's API) | **Dropped** earlier and again on 13 Nov 2026. |
+| Payment aggregators (Paystack, IntaSend, Flutterwave, Pesapal, Kopo Kopo) | **Ruled out** 13 Nov 2026 (section 14, item 10 has the research and the reasons). |
+| Phone prompt / STK Push (members paying from the site) | **Ruled out**: needs Daraja or an aggregator. |
+| Automatic payment intake (forwarding the Till's SMS) | **Declined** 11 Nov 2026. |
+| Pay helper on the dashboard | Built, then **removed** (v9.7): it moved no money. |
+
+**So payments stay manual by design:** members pay the Till; the admin imports the statement (PDF or CSV) once or twice a month; the app matches payments, keeps the ledger and sends nothing by itself.
+
+**Open question still unanswered (not blocking):** the tree has one parent link per person; does the owner want both parents as separate entries? (section 3.4).
+
+**Verify the project is complete at any time:** `node scripts/check-done.mjs` (section 13).
 
 ---
 
@@ -8,7 +31,7 @@
 
 1. Ask the owner to attach: **(a)** this README, **(b)** a fresh **zip of the project folder** (no `node_modules`, no `.next`, **never `.env.local`**), **(c)** a current **Supabase schema export** (the "CREATE TABLE" listing, as `.sql`), and **(d)** any screenshots or error text.
 2. Ask which **delivery zips and SQL files the owner has actually applied** (section 3.3 lists what exists and what is unconfirmed). Trust the zip they upload over any assumption.
-3. Say: *"Continue this project. Read the README first, then check it against the actual code and tell me what is left."* Then follow **section 14 (the next work)**.
+3. Say: *"Continue this project. Read the README first, then check it against the actual code and tell me what is left."* **Phase 1 is complete** (see STATUS above): run `node scripts/check-done.mjs` to confirm, then **ask the owner what Phase 2 is**. Section 14 is the log of Phase 1, kept for the reasons behind each decision.
 4. **Never ask the owner to paste a real secret** (Supabase service key, admin password, session secrets). They live only in Vercel Environment Variables and the local `.env.local`.
 5. The sandbox you work in probably **cannot** run `next build`, run SQL, or open a real PDF. The owner's `npm run build` and the Supabase SQL editor are the real tests (section 13).
 
@@ -22,7 +45,7 @@ A private web app for a **family emergency fund** that started **August 2026**:
 * **Financial year** = 1 August to 31 July. About **16 contributing members**.
 * One shared site. Members log in and see their own balance, the month-by-month ledger of everyone's contributions, the family tree and a chat. One admin runs it.
 * The app should **run itself**: stay awake (Supabase free tier pauses after ~7 idle days), text arrears reminders on the 7th and a fund report on the 15th, warn the admin when payment data is stale, and keep the books reconciled with the M-PESA balance.
-* Payments reach the app by **uploading the M-PESA statement** (PDF with password, or CSV). Automatic intake is wanted but **Daraja was dropped by the owner** (section 14, item 9).
+* Payments reach the app by **uploading the M-PESA statement** (PDF with password, or CSV). Automatic intake was **declined by the owner** (section 14, items 9 and 10); payments stay manual by design.
 
 Live at `https://family-fund-app-nine.vercel.app` (Vercel). GitHub: `github.com/danmusyokabness/family-fund-app` (private).
 
@@ -33,6 +56,7 @@ Live at `https://family-fund-app-nine.vercel.app` (Vercel). GitHub: `github.com/
 * **Non-technical.** Works on **Windows** (Command Prompt, Chrome, Notepad). Needs **precise click-by-click, copy-paste instructions every time**, every command in its **own code block**, assuming no background. Never write "as before".
 * Be **honest about what could not be verified**. The owner reports back with pasted terminal output and screenshots; real bugs have been found that way (several are in section 12).
 * Decisions are theirs: **recommend with pros and cons**, do not decide silently. Ask **at most one question at a time**, and do not stall on questions that do not block.
+* **Two rules the owner stated forcefully (13 Nov 2026):** (1) when they ask a **question, answer it first and do nothing else** (no building, no files) until they reply, because the answer may change their instructions; (2) when they say to proceed, **choose the order yourself and do the whole list**; do not ask which item to start with.
 * The chat tool cannot upload encrypted PDFs; they can only upload decrypted (picture-only) copies, which cannot be read by any program.
 * **Delivery format they asked for (use it every time):** a cumulative **zip** with real folder paths that extracts at the project root, and a message with these parts:
 
@@ -48,7 +72,7 @@ Live at `https://family-fund-app-nine.vercel.app` (Vercel). GitHub: `github.com/
 
 ## 3. CURRENT STATE
 
-### 3.1 Delivered and working (as of v8.2, 303 tests)
+### 3.1 Delivered and working (as of v10.0, 315 tests)
 
 | Area | Status |
 |---|---|
@@ -59,11 +83,13 @@ Live at `https://family-fund-app-nine.vercel.app` (Vercel). GitHub: `github.com/
 | Member dashboard: balance cards, month-by-month ledger (monthly contributions only), **Other income and notes** section, "Show full ledger" link | ✅ |
 | **Full ledger** page (every movement, categories, running balance equals Total in account) | ✅ |
 | Reminders (7th) and fund report (15th): a list of who should get what, with the exact wording and a **WhatsApp** button (and Copy text) per member; the admin sends them by hand. **No text-message provider** (Africa's Talking removed in v9.4). The daily cron only keeps the database awake | ✅ v9.4 |
-| Health tab (daily job, data age, texting mode, waiting payments, members without a phone, backup age, "Total in account matches M-PESA", unread chat messages), backup + CSV exports (superadmin only) | ✅ |
+| Health tab (daily job, data age, next reminder/report dates, waiting payments, members without a phone, backup age, "Total in account matches M-PESA", unread chat messages), backup + CSV exports (superadmin only) | ✅ |
 | Hardening: every route checks who is asking, locked data-reset, minimal public health page, security headers, `db/005` RLS lock, `docs/GO-LIVE.md` | ✅ |
-| **Family tree** drawn as a real tree: photo cards, parent-child lines, **fit to screen + zoom bar/buttons + scrollbars, colour per generation**, details panel, add/edit with privacy toggles, photo upload, "Where are you in the family?" first-visit step | ✅ delivered in v8.1/v8.2 |
+| **Family tree** drawn as a real tree: photo cards, parent-child lines, **fit to screen + zoom bar/buttons + scrollbars, colour per generation**, details panel, add/edit with privacy toggles, photo upload | ✅ v8.1/v8.2 |
+| **Family tree first-visit form** (v9.5): a member is asked once for date of birth + parent (required) and optional phone, education, work, where they live, spouse, about, each with a "Show to the family" tick; pre-filled if they already have an entry. **My information** section under the tree with Edit / Add my child / Add my spouse / Add my parent (v9.6). The family's own entries are offered as suggestions | ✅ v9.5/v9.6 (needs `db/009`) |
+| **Family-only members** (v9.6): use the tree and chat, no ledger, no reminders, not in group figures; admin toggle on the Members tab | ✅ v9.6 (needs `db/009`) |
 | **Cancel out** (Payments tab): erase a withdrawal, the deposit(s) that put it back and the M-PESA fee on those deposits, in one step, with the Total in account unchanged and no trace left (a few cents of rounding stay as one plain "Rounding" line). The tool is shown to and usable by the superadmin only | ✅ v9.3 (needs `db/008`) |
-| **Chat** (floating button: Everyone / a member privately / the Admin; admin inbox in the same widget; text to admin on a private message) | ✅ |
+| **Chat** (floating button: Everyone / a member privately / the Admin; admin inbox in the same widget; unread private messages show on the Health tab) | ✅ |
 
 ### 3.2 Family tree: profile libraries (v9.1) now wired in by v9.5
 
@@ -74,19 +100,19 @@ Delivered in `cancel-out-17.zip` together with the cancel-out feature (they chan
 * `lib/data/places.ts` (new): countries (Kenya first), Kenya's 47 counties, `regionsFor`. `lib/data/careers.ts` (new): education levels, work statuses, sectors, Kenyan institutions, job titles.
 * Tests for these are appended to `tests/family-tree.test.ts`.
 
-**Built in v9.5 (`tree-first-visit-21`, needs `db/009`):** `TreeNode`/`TreeRow`/`NodePatch` carry `education`, `work`, `residence` and `profileCompletedAt`; `HIDEABLE_FIELDS` includes `education`, `work`, `residence`; `changedFields` compares lists exactly; `viewForViewer` blanks hidden lists to `[]` and residence to `null`; `needsProfile`; `lib/onboarding.ts` (`planOnboarding`: the required details and parent rules); `POST /api/tree/onboard`; `components/TreeOnboarding.tsx` (the first-visit form), `components/ProfileFields.tsx` (the three structured editors, used there and in the edit form), `components/tree-common.tsx` (shared helpers). **Also built in v9.6:** the My information section, the family's own entries as suggestions, siblings with only an approximate birth ordered by that year (`birthKey`), family-only members. **Not built, by the owner's decision:** item 9 (automatic payment intake) and item 10 (STK Push, parked).
+**Built in v9.5 (`tree-first-visit-21`, needs `db/009`):** `TreeNode`/`TreeRow`/`NodePatch` carry `education`, `work`, `residence` and `profileCompletedAt`; `HIDEABLE_FIELDS` includes `education`, `work`, `residence`; `changedFields` compares lists exactly; `viewForViewer` blanks hidden lists to `[]` and residence to `null`; `needsProfile`; `lib/onboarding.ts` (`planOnboarding`: the required details and parent rules); `POST /api/tree/onboard`; `components/TreeOnboarding.tsx` (the first-visit form), `components/ProfileFields.tsx` (the three structured editors, used there and in the edit form), `components/tree-common.tsx` (shared helpers). **Also built in v9.6:** the My information section, the family's own entries as suggestions, siblings with only an approximate birth ordered by that year (`birthKey`), family-only members. **Not built, by the owner's decision:** item 9 (automatic payment intake) and item 10 (STK Push, ruled out).
 
-### 3.3 What the owner has applied (UNCONFIRMED: ask)
+### 3.3 What the owner has applied (all confirmed on 13 Nov 2026, except the security items in section 15)
 
-Delivered zips in order (each later one is cumulative over the earlier ones unless noted): `batch-1` (db 001-004, SMS fix, PDF reader, member ordering), `all-fixes-combined`, `reminders-6`, `ledger-and-messages-7`, `admin-complete-8`, `alerts-9`, `hardening-10`, `payment-purposes-11`, `other-income-12`, `tree-and-board-13`, `tree-chat-14`, `fix-photo-regex-15`, `tree-zoom-colour-16`, `fix-join-form-17`, `erase-cancelled-18`, `hanging-fee-19`, `no-sms-20`, `tree-first-visit-21`, `finish-22`, `remove-payhelper-23`. From a screenshot the owner has deployed **at least `tree-chat-14`**. SQL files `db/005`, `db/006`, `db/007` were requested, and **`db/008` (erase cancelled) is new in v9.2**; **confirm they ran** (compare the schema export with section 6). Also unconfirmed: secrets rotated (the very first zip contained `.env.local`), `git rm -r legacy` (confirmed done). Vercel variables `AT_API_KEY`, `AT_USERNAME`, `AT_SENDER_ID`, `SMS_LIVE` should be deleted (nothing reads them now); and `npm uninstall africastalking` should be run once.
+Delivered zips in order (each later one is cumulative over the earlier ones unless noted): `batch-1` (db 001-004, SMS fix, PDF reader, member ordering), `all-fixes-combined`, `reminders-6`, `ledger-and-messages-7`, `admin-complete-8`, `alerts-9`, `hardening-10`, `payment-purposes-11`, `other-income-12`, `tree-and-board-13`, `tree-chat-14`, `fix-photo-regex-15`, `tree-zoom-colour-16`, `fix-join-form-17`, `erase-cancelled-18`, `hanging-fee-19`, `no-sms-20`, `tree-first-visit-21`, `finish-22`, `remove-payhelper-23`. **The owner confirmed on 13 Nov 2026 that everything through `remove-payhelper-23` is applied and working** (SQL `db/008` and `db/009` run, `africastalking` uninstalled, Vercel `AT_*`/`SMS_LIVE` variables removed, `scripts/check-done.mjs` passed). SQL files `db/001` to `db/009` have all been run (the check script verifies `db/008` and `db/009` against the live database). **Still unconfirmed:** whether the secrets were rotated after the very first zip contained `.env.local`, and whether the GitHub repository is private (it was seen as public on 11 Nov 2026): see section 15.
 
-### 3.4 Owner decisions pending / open questions
+### 3.4 Owner decisions: open and closed
 
 * **Parents:** the tree has ONE parent link per person (`parent_id`); the other parent is shown on the card as the "spouse" text. The owner said "parents" are mandatory. Ask whether one parent link is enough or both parents must be separate entries (that would need a second link).
-* **Payment text samples** for the free automatic intake (section 14, item 9). Still waiting.
+* ~~Payment text samples for the automatic intake~~ **Closed:** the owner declined the automatic intake on 11 Nov 2026.
 * **Old fee rows (11 Nov 2026):** before v9.2, cancel-out refused M-PESA charges, so the fee on a put-back deposit stayed on the books and members saw it as an unexplained charge. **Handled in v9.3** as a "hanging fee": the Cancel out tool lists it on the withdrawal side, to be erased with a deposit paid in to cover it (owner's case: deposit 105 against a fee of 93 leaves 12 as other income). A hanging fee with no covering deposit stays a real cost (erasing it would move the Total in account).
 * **Africa's Talking removed (11 Nov 2026):** the reminder texts failed with 401, then (after fixing the login) every number returned `UserInBlacklist` (406) on the shared route, and the fix was a paid sender ID, so the owner decided to remove it. Do not reintroduce a paid SMS provider without the owner. The free route is the WhatsApp button. Removed: `lib/sms.ts`, `lib/admin-alerts.ts`, `lib/africastalking.d.ts`, `/api/admin/sms-log`, `POST /api/admin/messages`, `sendMessages`, the SMS part of the daily cron, the admin alert and private-message texts, the Setup field `admin_alert_phone`, the Health SMS and import-alert lines, the env vars `AT_*` and `SMS_LIVE`. Kept: the `sms_log` table and its history (no longer written), the plan/preview, the stale-data warning.
-* Click-to-pay: the owner asked for an M-PESA prompt with a pre-filled amount. That is an STK Push (a Daraja API); see section 14, item 8.
+* ~~Click-to-pay (an M-PESA prompt)~~ **Closed on 13 Nov 2026:** it needs Daraja or an aggregator, and the owner ruled out both (section 14, item 10).
 
 ---
 
@@ -121,7 +147,7 @@ Business settings (Till, target, days, wording, thresholds, alert phone, site ad
 
 ---
 
-## 5. FILE MAP (as of v8.3)
+## 5. FILE MAP (as of v8.3; files added or removed since then are listed in section 16, and `git` is the full truth)
 
 ```
 db/001_schema.sql                 base schema, NON-destructive, safe to re-run
@@ -131,6 +157,7 @@ db/004_tree_board_hardening.sql   members.sort_order, tree soft delete, family_n
 db/005_security_check.sql         RLS on every table, anon access revoked, proof table
 db/006_payment_purpose.sql        payments.purpose, related_expense_id
 db/007_tree_privacy_chat.sql      tree: hidden_fields, photo, has_photo, spouse_details; chat: recipient_member_id, to_admin
+scripts/check-done.mjs            read-only check that the project is in its finished state (files, packages, git, database, live site)
 db/009_family_profile.sql         family_nodes education/work/residence/profile_completed_at; members.contributes (used for family-only members since v9.6)
 db/008_erase_cancelled.sql        import_skip_receipts (erased M-PESA receipt numbers, nothing else); copies receipts from old cancel_out records into it, then deletes those records
 docs/GO-LIVE.md                   beginner go-live steps, monthly routine, troubleshooting
@@ -188,7 +215,7 @@ All tables have **RLS enabled and no policies**; the public anon key reads nothi
 | Table | Key columns and rules |
 |---|---|
 | `settings` | `key` PK, `value`, `updated_at` |
-| `members` | `id`, `full_name`, `joined_on` (**must be the 1st of a month**), `is_active`, `notes`, `is_admin`, `sort_order` (admin's manual position when birth date unknown). *Planned:* `contributes` boolean |
+| `members` | `id`, `full_name`, `joined_on` (**must be the 1st of a month**), `is_active`, `notes`, `is_admin`, `sort_order` (admin's manual position when birth date unknown), `contributes` boolean default true (false = family-only, v9.6) |
 | `member_phones` | `member_id`, `phone_number` (**unique**, `^254[17][0-9]{8}$`), `is_primary` (one primary per member) |
 | `payer_aliases` | `member_id`, `alias_type` (`masked_phone` = a statement number like `254110***358`, standard form; `shortcode` = a till/paybill number; `payer_name`), `alias_value`, `source` (`admin`/`confirmed`/`import`) |
 | `payments` | `amount` ≠ 0, `kind` (`mpesa`/`manual`/`adjustment`/`opening`), **`source` only `statement`/`daraja`/`admin`** (writing `pdf` once rejected every payment), `mpesa_receipt` (unique), payer fields, `paid_at`, `match_status` (`matched`/`needs_confirmation`/`unmatched`/`ignored`), `suggested_member_id`, `import_id`, `raw`, **`purpose`** (`monthly` default / `booster` / `recovery` / `donation` / `other`), `related_expense_id` |
@@ -200,7 +227,7 @@ All tables have **RLS enabled and no policies**; the public anon key reads nothi
 | `job_runs` | `job` (`daily`, `export`), `started_at`, `ok`, `details` (json) |
 | `login_attempts` | throttling (5 failures lock 15 minutes) |
 | `message_board` | the chat. `member_id` (the sender; for the admin's reply, the member it is for), `sender_name`, `content`, `is_private`, `is_from_admin`, `to_admin`, `recipient_member_id`, `read_at`, `deleted_at` |
-| `family_nodes` | `name`, `spouse_name`, `spouse_details`, `parent_id`, `spouse_id`, `member_id` (unique per live node), `date_of_birth`, `birthdate` (approximate text), `work_education`/`bio` (old free text, legacy), `phone`, `hidden_fields text[]`, `photo` (small JPEG as text), `has_photo`, `deleted_at`, `updated_at`, `created_by_member_id`. *Planned:* `education jsonb`, `work jsonb`, `residence jsonb` |
+| `family_nodes` | `name`, `spouse_name`, `spouse_details`, `parent_id`, `spouse_id`, `member_id` (unique per live node), `date_of_birth`, `birthdate` (approximate text), `work_education`/`bio` (old free text, legacy), `phone`, `hidden_fields text[]`, `photo` (small JPEG as text), `has_photo`, `deleted_at`, `updated_at`, `created_by_member_id`. `education jsonb` (default []), `work jsonb` (default []), `residence jsonb`, `profile_completed_at` (null until the first-visit form is saved) [added by db/009]. Original plan note: `education jsonb`, `work jsonb`, `residence jsonb` |
 | `family_node_history` | **no longer written** (change log removed); table kept |
 
 **SQL rules (owner requirement):** every SQL file must be **safe to run twice and never destructive** (`create ... if not exists`, `add column if not exists`, guarded `do $$` blocks, never `drop`/`truncate`/`delete`). Number files in order, header comment with what it does and "safe to re-run", end with a **check query that returns `true` values**. Tell the owner: SQL Editor, New query, paste, Run, and what success looks like. **Run SQL BEFORE deploying code that reads new columns** (it caused an outage once).
@@ -213,7 +240,7 @@ All tables have **RLS enabled and no policies**; the public anon key reads nothi
 
 | # | Decision |
 |---|---|
-| D1 | Payment intake is by statement upload (PDF/CSV). Automatic intake is wanted, **Daraja dropped**; see section 14 item 9 |
+| D1 | Payment intake is by statement upload (PDF/CSV). Automatic intake was **declined** (13 Nov 2026), Daraja and aggregators ruled out; see section 14 items 9 and 10 |
 | D2 | A payment is applied **oldest debt first (FIFO)**; extra becomes advance credit; a leftover under target stays a partial month |
 | D3 | Balance = (months due x target) minus everything counted for the member. Months due run from the joining month to the current Nairobi month |
 | D4 | The joining month owes the full target (no proration) |
@@ -300,6 +327,11 @@ Warm paper, ink, hairline rules, one accent. CSS variables in `app/globals.css` 
 10. **Never run `npm audit fix --force`** (it once downgraded `eslint-config-next` and broke every deploy).
 11. Old test assertions can encode old (wrong) rules: when a rule changes, update the test to the new rule, and add a test that fails on the old code.
 12. Do not trust the owner's zip to contain only what you expect: a `Readme  md` stray file and old `legacy/` existed.
+13. **`npm run build` type-checks the test files too** (`tsconfig` includes `**/*.ts`). Adding a required field to a shared type (`TreeNode`, `TreeRow`) breaks the build unless the test helpers that build those objects are updated in the same zip.
+14. The sandbox has no `node_modules`, so type-checking needs a temporary `tsconfig` with `paths` for `@/*`; the missing React types produce noise (implicit `any`, `key` props) that can be ignored. Real errors still show (a removed helper that another part still used was caught this way).
+15. A guard test forbids regex features newer than ES2017 (a lookbehind failed it). Use older patterns.
+16. `package.json` lists the test files explicitly: removing a test file means editing that list too (v9.4 did, and the owner then ran `npm uninstall africastalking`, which edits `package.json` and the lock file themselves). Ship `package.json` only for such a one-token change, and tell the owner the order.
+17. **A deleted feature leaves dead code in many places** (settings, health checks, cron, docs, tests). Search the whole repo for the name, and add a guard test that scans `app`, `lib`, `components` for it.
 
 ---
 
@@ -308,13 +340,14 @@ Warm paper, ink, hairline rules, one accent. CSS variables in `app/globals.css` 
 * `npm test` (Node runner). Currently **315 pass, 0 fail** in the sandbox (303 in the last build the owner confirmed, v8.2). Add tests for every rule; add a regression test for every bug; prove a new guard test fails on the old code.
 * Pure logic is exercised for real. Routes, components and SQL can only be syntax-checked in a sandbox: **say so plainly** and rely on the owner's `npm run build`, their screenshots and the Supabase check query.
 * Before handing over a zip: apply it onto a clean copy of the owner's project (their `package.json` kept) and run `npm test`; syntax-check changed `.ts/.tsx`; type-check pure libs with target ES2017.
+* **Completion check (owner-run, read-only, prints no secrets):** `node scripts/check-done.mjs` (optionally `--site=https://...`). It checks removed files are gone, finished files exist, Africa's Talking is out of the code and `package.json`/lock file, `.env.local` is not tracked, git is clean and pushed, the new database tables/columns exist, and the live site answers sanely (401 for logged-out visitors, never 500). It does not run the tests or the build.
 * Test fakes: a small fake Supabase client (chained `select/eq/order/limit/insert`) in `tests/reminders.test.ts`. **Rows must carry every column a query filters on** (adding `.eq("contributes", true)` to a query means the fake rows need `contributes: true`).
 
 ---
 
-## 14. THE NEXT WORK (do these in order; one batch, files written once)
+## 14. PHASE 1 WORK LOG (ALL DONE; kept for the reasons behind each decision)
 
-**Owner request (23 Oct 2026, from a screenshot of the join form):** the "add yourself" form is broken and incomplete, and these were asked for. Status: the planned work is finished (v9.1, v9.5, v9.6, v9.7). The owner **decided against** item 9 (automatic payment intake) on 11 Nov 2026, and item 10 (STK Push) is parked. The Pay helper (item 8) was built and then removed. Payments stay manual: the admin imports a statement.
+**Owner request (23 Oct 2026, from a screenshot of the join form):** the "add yourself" form is broken and incomplete, and these were asked for. Status: **ALL DONE (13 Nov 2026).** The planned work is finished (v9.1, v9.5, v9.6, v9.7). The owner **decided against** item 9 (automatic payment intake) on 11 Nov 2026, and item 10 (STK Push) is ruled out. The Pay helper (item 8) was built and then removed. Payments stay manual: the admin imports a statement.
 
 0. **Bug (fixed in v9.1 in `lib/family-tree.ts`):** `sanitizeNodePatch` used to treat `undefined` keys as sent, so joining failed with "Spouse name must be text...". Still make sure `app/api/tree/connect/route.ts` and the forms only send defined fields.
 
@@ -331,37 +364,44 @@ Warm paper, ink, hairline rules, one accent. CSS variables in `app/globals.css` 
    * Each of phone, date of birth, education, work, residence, spouse has a "Show to the family" checkbox. **Extend `HIDEABLE_FIELDS`** with `education`, `work`, `residence` (keep the old `bio`/`workEducation`/`birthdate` names valid), add the three fields to `TreeNode`/`TreeRow`/`NodePatch`/`nodeFromRow`/`rowFromPatch`/`changedFields`, make `viewForViewer` blank lists to `[]` and `residence` to `null`, and call `sanitizeEducation/Work/Residence` from `sanitizeNodePatch` when those keys are present. The details panel shows entries with `describeEducation` / `describeWork` / `describeResidence`.
    * Mandatory only: name, date of birth, parent.
 
-5. **Family-only members (D26): BUILT v9.6.** See D26 in section 13.
+5. **Family-only members (D26): BUILT v9.6.** See D26 in section 7.
 
-6. **Tests** (done for items 1, 2, 4 in v9.5: `tests/family-tree.test.ts` and `tests/session-token.test.ts`; still needed for 3 and 5) for every rule above (access guard strings in `tests/session-token.test.ts`, new-person rules, profile, contributes filtering in the fake-DB tests), a stacked-zip verification, README and GO-LIVE updates, and the owner's "Apply it" message (SQL 009 first).
+6. **Tests: DONE** for every item above (`tests/family-tree.test.ts`, `tests/session-token.test.ts`, `tests/reminders.test.ts`, `tests/dashboard.test.ts`; 315 pass), including the access guards for family-only members and the first-visit form, stacked-zip verification on a clean copy, and the README / GO-LIVE updates.
 
 7. Optional polish: siblings with only an approximate birth are now sorted by that year (BUILT v9.6). Still open: allow a second parent link if the owner wants both parents as entries.
 
-8. **Pay helper: built in v9.6, then REMOVED in v9.7 at the owner's request** (it only showed an amount and the Till number and moved no money, so it added work without saving any). Do not rebuild it. The only way to make paying easier is a real phone prompt (item 10), which is parked.
+8. **Pay helper: built in v9.6, then REMOVED in v9.7 at the owner's request** (it only showed an amount and the Till number and moved no money, so it added work without saving any). Do not rebuild it. The only way to make paying easier is a real phone prompt (item 10), which was ruled out.
 
 9. **Automatic payment intake without Daraja: the owner DECIDED AGAINST this on 11 Nov 2026. Do not build it.** The research notes below are kept only so the reasons are not forgotten.
    * **Recommended: SMS forwarding.** The phone that receives the Till's "you have received KES X from NAME PHONE" text forwards each SMS (Android forwarder app, or a service such as Telerivet) to a secret URL, e.g. `POST /api/intake/sms/<INTAKE_SECRET>`; a pure parser (`lib/sms-intake.ts`) extracts receipt, amount, payer name, masked phone, time; insert + match + allocate like the statement import (`source: "statement"` or add a migration value; the receipt de-duplicates against later statement imports); unparseable messages go to a review queue, never guessed; add a Health card. Caveats: the phone must stay on and online and must really receive a per-payment SMS; Safaricom can change the wording. **The owner must first paste 3+ real payment SMS (names/numbers masked) and say which phone receives them.** Fresh intake should count in `loadDataFreshness`.
    * Aggregators (Kopo Kopo and others) give webhooks only for numbers issued through them (a **new Till**, plus fees); several are wrappers around Daraja. Not recommended unless the owner changes the Till.
    * Daraja, if ever revisited: C2B v2 register-URL is one-time in production; callback URLs must avoid words like mpesa/safaricom/exe/sql; v2 shows the payer phone masked as `2547 ***** 126` (strip spaces, then `canonicalMaskedPhone`); callbacks are unsigned (secret in the path); go-live needs Safaricom approval; which shortcode (Till 1611383 or store 1138423) is the registration number was an open question.
 
-10. **Parked by the owner (11 Nov 2026): let a member prompt a payment from the site.** A real prompt on the phone is an M-PESA **STK Push** (a Daraja API, which the owner dropped, or an aggregator on its own Till). Do not start it without the owner; item 8 (the Pay helper) is the no-Daraja version and item 9 is automatic intake.
+10. **RULED OUT by the owner (13 Nov 2026): letting a member prompt a payment from the site (STK Push), by Daraja or by an aggregator.** Research kept so it is not repeated: a real prompt needs Daraja or a provider's own M-PESA connection. With a provider the money lands in the provider's account, not Till 1611383, so the statement import and the "Total in account matches M-PESA" check would stop reflecting those payments and would need redesign, plus a webhook, failure handling and recording of withdrawals. Quoted prices (Nov 2026, sources disagreed): Paystack M-PESA 1.5% with payouts of KSh 20-60; IntaSend 1% on its help page but 3% in a comparison article (payouts KSh 10-50 or a flat 100); Flutterwave roughly 1.4-2.9%; Pesapal about 3%; Kopo Kopo unconfirmed. Most providers want a registered business. Safaricom's own Till tariff charged a merchant nothing up to KSh 500 and 0.55% above (capped at KSh 200), so KES 300 contributions cost almost nothing today. Conclusion: the saving is only the monthly statement import, which does not justify the fees, the new risk and the rework.
 
 ---
 
-## 15. OWNER TODO LIST (confirm with the owner)
+## 15. OWNER TODO LIST (routine, not development)
 
-* Run `db/005`, `db/006`, `db/007` in Supabase (check query values `true`); `db/008` (erase cancelled, v9.2); later `db/009`.
-* **Rotate secrets** and check git history for `.env.local` (`docs/GO-LIVE.md`, Part 1).
-* In Vercel, delete `AT_API_KEY`, `AT_USERNAME`, `AT_SENDER_ID` and `SMS_LIVE`, then redeploy. Set the **Site address** in Setup to `https://family-fund-app-nine.vercel.app`.
-* Import the latest statement before the 7th each month; clear the Needs-confirmation / Unmatched queues; download a full backup monthly (Health tab).
-* Send the sample payment SMS (section 14 item 9) and answer the parent question (3.4).
-* Run `npm uninstall africastalking` once (it updates `package.json` and `package-lock.json`).
-* Confirm everything that is unconfirmed in 3.3.
+**Monthly routine** (the app sends nothing by itself):
+
+* Around the 3rd to 5th: request the M-PESA statement, **Import** tab (Preview, check "Balance reconciles", Import), then clear the **Needs confirmation** and **Unmatched** queues on the Payments tab.
+* Around the 7th: **Reminders** tab, **Reminder**, press **WhatsApp** for each member listed. Around the 15th: **Fund report** the same way.
+* Once a month: **Health** tab, **Download full backup**.
+
+**Security, still to confirm** (the owner has not said whether these are done):
+
+* Make the GitHub repository **private** (it was public on 11 Nov 2026) and check the git history for `.env.local` (the very first zip contained it). If it was ever committed, **rotate every secret**: the Supabase service key, `ADMIN_PASSWORD`, `SESSION_SECRET`, `CRON_SECRET` (`docs/GO-LIVE.md`, Part 1).
+* The Africa's Talking API key was pasted into a chat on 12 Nov 2026: generate a new key (this kills the old one) and leave it unused.
+* The stray duplicate README in the repo root (`Readme · md`) can be deleted.
+
+**Done and confirmed (13 Nov 2026):** `db/005` to `db/009`, `npm uninstall africastalking`, removal of the `AT_*` / `SMS_LIVE` Vercel variables, the Site address in Setup, and `scripts/check-done.mjs`.
 
 ---
 
 ## 16. CHANGELOG (compact, newest first)
 
+* **v10.0 (13 Nov 2026): PHASE 1 COMPLETE.** Documentation only plus `scripts/check-done.mjs` (a read-only completion check). The owner confirmed every earlier zip is applied and working. Recorded as closed: aggregators, STK Push, Daraja and the automatic intake (section 14, item 10; STATUS at the top). Section 15 is now the routine plus the security items still unconfirmed. Added lessons 13-17 and the owner's two working rules (section 2). 315 tests.
 * **v9.7 (11 Nov 2026):** the **Pay helper was removed** (`components/PayHelper.tsx`, `lib/pay.ts`, its tests and the dashboard box): it moved no money, so it only added work. The automatic payment intake (item 9) was declined by the owner. Nothing else changed. 315 tests.
 * **v9.6 (11 Nov 2026):** **family-only members** (`members.contributes`, uses `db/009`): no ledger/balance/reminders/group figures, tree and chat stay open, admin toggle on the Members tab, refused for a member with payments; (a Pay helper was also added, then removed in v9.7); **My information** section under the tree; the family's own entries as suggestions; approximate-birth ordering. 318 tests.
 * **v9.5 (11 Nov 2026):** **first-visit details form for the family tree**: a member is asked once (no entry yet, or an uncompleted entry, which comes pre-filled) for date of birth, parent and optional phone/education/work/residence/spouse/about, each with a "Show to the family" tick; structured education/work/residence editors; `db/009`; `/api/tree/onboard`; `/api/tree/connect` now only claims an entry; `needsProfile` in `/api/tree`; the card shows the new details. 310 tests.
