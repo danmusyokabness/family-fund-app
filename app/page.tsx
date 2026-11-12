@@ -7,6 +7,8 @@
 
 import { redirect } from "next/navigation";
 import { getMemberSession, getAdminSession } from "@/lib/auth";
+import { memberContributes } from "@/lib/access";
+import { supabaseAdmin } from "@/lib/supabase";
 import AppNav from "@/components/AppNav";
 import MemberDashboard from "@/components/MemberDashboard";
 import ChatWidget from "@/components/ChatWidget";
@@ -17,6 +19,8 @@ export default async function Home() {
   const member = await getMemberSession();
   const isAdmin = await getAdminSession();
   if (!member && !isAdmin) redirect("/login");
+  // A family-only member has no ledger: their home is the family tree.
+  if (member && !isAdmin && !(await memberContributes(supabaseAdmin(), member.memberId))) redirect("/tree");
 
   return (
     <main className="min-h-screen">

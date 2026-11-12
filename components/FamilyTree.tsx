@@ -29,7 +29,7 @@ import { asTreeNodes, born, initials, Photo, shrinkPhoto, type TreeData } from "
 import TreeOnboarding from "./TreeOnboarding";
 import { dropBlankEducation, dropBlankWork, EducationEditor, ResidenceEditor, WorkEditor } from "./ProfileFields";
 import type { EducationEntry, Residence, WorkEntry } from "@/lib/profile";
-import { describeEducation, describeResidence, describeWork } from "@/lib/profile";
+import { collectSuggestions, describeEducation, describeResidence, describeWork } from "@/lib/profile";
 
 // useLayoutEffect on the page, plain useEffect while the server prepares the first view (where layout effects do nothing).
 const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
@@ -54,6 +54,7 @@ function PersonForm({ editing, data, onDone, onCancel }: { editing: Editing; dat
   const [education, setEducation] = useState<EducationEntry[]>(existing?.education ?? []);
   const [work, setWork] = useState<WorkEntry[]>(existing?.work ?? []);
   const [residence, setResidence] = useState<Residence | null>(existing?.residence ?? null);
+  const suggestions = useMemo(() => collectSuggestions(data.nodes), [data.nodes]);
   const [bio, setBio] = useState(existing?.bio ?? "");
   const [phone, setPhone] = useState(existing?.phone ?? "");
   const [hidden, setHidden] = useState<Set<string>>(new Set(existing?.hiddenFields ?? []));
@@ -214,13 +215,13 @@ function PersonForm({ editing, data, onDone, onCancel }: { editing: Editing; dat
 
       <div className="space-y-1">
         <p className="text-xs text-ink-soft">Where they studied</p>
-        <EducationEditor value={education} onChange={setEducation} />
+        <EducationEditor value={education} onChange={setEducation} institutions={suggestions.institutions} />
         {visibleBox("education")}
       </div>
 
       <div className="space-y-1">
         <p className="text-xs text-ink-soft">Work</p>
-        <WorkEditor value={work} onChange={setWork} />
+        <WorkEditor value={work} onChange={setWork} employers={suggestions.employers} titles={suggestions.titles} />
         {visibleBox("work")}
       </div>
 
@@ -490,6 +491,7 @@ export default function FamilyTree() {
 
   const editable = new Set(data.editableIds);
   const canAddChild = new Set(data.addChildIds);
+  const myNode = data.me.nodeId ? data.nodes.find((n) => n.id === data.me.nodeId) ?? null : null;
   const closeAll = () => {
     setSelected(null);
     setEditing(null);
@@ -578,6 +580,50 @@ export default function FamilyTree() {
 
       {data.isAdmin && (
         <p className="text-xs text-ink-soft">As an admin you can edit everyone, move people to a different parent, and add anywhere.</p>
+      )}
+
+      {/* ---- My information: always visible below the tree, so you never have to find your own card ---- */}
+      {myNode && (
+        <section className="paper-card space-y-3 p-4">
+          <h2 className="font-serif text-lg font-semibold">My information</h2>
+          <div className="flex items-start gap-3">
+            <Photo node={myNode} size={56} />
+            <div className="space-y-0.5 text-sm">
+              <p className="font-medium">{myNode.name}</p>
+              {born(myNode) && <p className="text-xs text-ink-soft">{born(myNode)}</p>}
+              {myNode.education.map((e, i) => (
+                <p key={`e${i}`} className="text-xs text-ink-soft">
+                  {describeEducation(e)}
+                </p>
+              ))}
+              {myNode.work.map((w, i) => (
+                <p key={`w${i}`} className="text-xs text-ink-soft">
+                  {describeWork(w)}
+                </p>
+              ))}
+              {myNode.residence && describeResidence(myNode.residence) && <p className="text-xs text-ink-soft">Lives in {describeResidence(myNode.residence)}</p>}
+              {myNode.spouseName && <p className="text-xs text-ink-soft">Spouse: {myNode.spouseName}</p>}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="btn-primary px-3 py-1 text-xs" onClick={() => setEditing({ mode: "edit", node: myNode })}>
+              Edit my details
+            </button>
+            {canAddChild.has(myNode.id) && (
+              <button type="button" className="btn-secondary px-3 py-1 text-xs" onClick={() => setEditing({ mode: "add", parentId: myNode.id, label: "Add your child" })}>
+                Add my child
+              </button>
+            )}
+            <button type="button" className="btn-secondary px-3 py-1 text-xs" onClick={() => setEditing({ mode: "edit", node: myNode })}>
+              {myNode.spouseName ? "Edit my spouse" : "Add my spouse"}
+            </button>
+            {data.canAddParent && (
+              <button type="button" className="btn-secondary px-3 py-1 text-xs" onClick={() => setEditing({ mode: "addParent" })}>
+                Add my parent
+              </button>
+            )}
+          </div>
+        </section>
       )}
 
       {/* ---- Details / edit panel ---- */}

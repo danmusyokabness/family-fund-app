@@ -21,6 +21,7 @@ export async function loadMembersForMatching(): Promise<MemberForMatching[]> {
     .from("members")
     .select("id, full_name, member_phones(phone_number), payer_aliases(alias_type, alias_value)")
     .eq("is_active", true)
+    .eq("contributes", true)
     .returns<MemberRow[]>();
 
   if (error) throw new Error(`loadMembersForMatching: ${error.message}`);

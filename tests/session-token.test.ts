@@ -226,3 +226,33 @@ test("first-visit details form: only members, the name and links come from the s
   assert.ok(view.includes("data.needsToConnect || data.needsProfile") && view.includes("<TreeOnboarding"), "the tree page must show the details form first when it is needed");
 });
 
+test("family-only members: no ledger, no balance, no reminders, no group figures; admins and the tree are unaffected", () => {
+  const access = read("lib/access.ts");
+  assert.ok(access.includes('data?.contributes !== false'), "a missing value must count as contributing, so nobody is locked out by mistake");
+  for (const file of ["app/api/dashboard/route.ts", "app/api/ledger/full/route.ts"]) {
+    const text = read(file);
+    assert.ok(text.includes("memberContributes") && /status: 403/.test(text), `${file} must refuse a member who does not contribute`);
+    assert.ok(/member && !isAdmin && !\(await memberContributes/.test(text), `${file}: admins must always be let in`);
+  }
+  assert.ok(read("app/api/dashboard/route.ts").includes('.eq("contributes", true)'), "the group figures must leave family-only members out");
+  assert.ok(read("lib/messaging.ts").includes('.eq("contributes", true)'), "reminders and reports must leave family-only members out");
+  assert.ok(read("lib/load-members-for-matching.ts").includes('.eq("contributes", true)'), "payments must not be matched to family-only members");
+  assert.ok(read("app/page.tsx").includes('redirect("/tree")') && read("app/ledger/page.tsx").includes('redirect("/tree")'), "a family-only member's home is the tree");
+  assert.ok(!read("app/api/tree/route.ts").includes("memberContributes"), "the family tree must stay open to family-only members");
+  assert.ok(!read("app/api/chat/route.ts").includes("memberContributes"), "the chat must stay open to family-only members");
+});
+
+test("family-only members: only an admin changes it, and never for a member who already has payments", () => {
+  const route = read("app/api/admin/members/[id]/route.ts");
+  assert.ok(route.includes("requireAdmin"), "changing a member needs an admin");
+  assert.ok(/count \?\? 0\) > 0/.test(route) && route.includes("payment_allocations"), "a member with payments must not be made family-only");
+  assert.ok(read("app/api/admin/members/route.ts").includes("contributes: body.contributes !== false"), "new members contribute unless said otherwise");
+});
+
+test("the dashboard shows the Pay helper to members only, using the real monthly amount and Till number", () => {
+  const dash = read("components/MemberDashboard.tsx");
+  assert.ok(/data\.me && <PayHelper balance=\{data\.me\.balance\} targetAmount=\{data\.targetAmount\} tillNumber=\{data\.tillNumber\}/.test(dash));
+  const helper = read("components/PayHelper.tsx");
+  assert.ok(!/fetch\(/.test(helper), "the helper only shows numbers; it never calls the server or moves money");
+});
+

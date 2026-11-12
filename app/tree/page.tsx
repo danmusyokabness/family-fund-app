@@ -4,6 +4,8 @@
 
 import { redirect } from "next/navigation";
 import { getMemberSession, getAdminSession } from "@/lib/auth";
+import { memberContributes } from "@/lib/access";
+import { supabaseAdmin } from "@/lib/supabase";
 import AppNav from "@/components/AppNav";
 import FamilyTree from "@/components/FamilyTree";
 
@@ -13,6 +15,7 @@ export default async function TreePage() {
   const member = await getMemberSession();
   const isAdmin = await getAdminSession();
   if (!member && !isAdmin) redirect("/login");
+  const familyOnly = Boolean(member) && !isAdmin && !(await memberContributes(supabaseAdmin(), member!.memberId));
 
   return (
     <main className="min-h-screen">
@@ -22,7 +25,7 @@ export default async function TreePage() {
             <p className="font-serif text-lg font-semibold">Family Emergency Fund</p>
             <p className="text-xs text-ink-soft">{member ? member.fullName : "Superadmin"}</p>
           </div>
-          <AppNav isAdmin={isAdmin} isMember={Boolean(member)} current="tree" />
+          <AppNav isAdmin={isAdmin} isMember={Boolean(member)} current="tree" familyOnly={familyOnly} />
         </div>
       </header>
       <div className="mx-auto max-w-screen-lg px-4 py-6 sm:px-6">

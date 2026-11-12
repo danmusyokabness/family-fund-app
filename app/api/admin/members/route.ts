@@ -25,7 +25,7 @@ export async function GET() {
   const { data, error } = await db
     .from("members")
     .select(
-      "id, full_name, joined_on, is_active, is_admin, notes, created_at, sort_order, " +
+      "id, full_name, joined_on, is_active, is_admin, contributes, notes, created_at, sort_order, " +
         "member_phones(id, phone_number, is_primary), " +
         "payer_aliases(id, alias_type, alias_value), " +
         // "!family_nodes_member_id_fkey" names WHICH link between the tree and members to follow.
@@ -49,6 +49,8 @@ interface CreateMemberBody {
   /** Numbers copied from a statement, like 254110***358. */
   maskedPhones?: string[];
   notes?: string;
+  /** false = a family-only member (uses the tree and chat, does not contribute). Default true. */
+  contributes?: boolean;
 }
 
 export async function POST(req: NextRequest) {
@@ -97,7 +99,7 @@ export async function POST(req: NextRequest) {
 
   const { data: member, error: memberError } = await db
     .from("members")
-    .insert({ full_name: fullName, joined_on: joinedOn, notes: body.notes?.trim() || null })
+    .insert({ full_name: fullName, joined_on: joinedOn, notes: body.notes?.trim() || null, contributes: body.contributes !== false })
     .select("id, full_name, joined_on, is_active, notes")
     .single();
 

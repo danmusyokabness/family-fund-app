@@ -3,12 +3,14 @@
 // GET ?fy=2026-08 (optional — any month inside the desired financial
 // year; defaults to the current one)
 //
-// Open to any logged-in identity — a member sees their own balance
+// Open to any logged-in identity (except a family-only member, who has no
+// ledger) — a member sees their own balance
 // cards plus the full ledger; the superadmin (who has no member record)
 // sees the group figures and the ledger, but no personal cards.
 
 import { NextRequest, NextResponse } from "next/server";
-import { getMemberSession, getAdminSession } from "@/lib/auth";
+import { getMemberSession, getAdminContext } from "@/lib/auth";
+import { memberContributes } from "@/lib/access";
 import { supabaseAdmin } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/pagination";
 import { mergeSettingsWithDefaults } from "@/lib/settings";
@@ -17,7 +19,7 @@ import { buildDashboard, type DashboardAllocation, type DashboardMember, type Da
 
 export async function GET(req: NextRequest) {
   const member = await getMemberSession();
-  const isAdmin = await getAdminSession();
+  const isAdmin = (await getAdminContext()).isAdmin;
   if (!member && !isAdmin) {
     return NextResponse.json({ error: "Not logged in." }, { status: 401 });
   }
@@ -28,12 +30,18 @@ export async function GET(req: NextRequest) {
 
   const db = supabaseAdmin();
 
+  // A family-only member (does not contribute) has no ledger or balance to see; admins always do.
+  if (member && !isAdmin && !(await memberContributes(db, member.memberId))) {
+    return NextResponse.json({ error: "This part of the site is for members who contribute to the fund." }, { status: 403 });
+  }
+
   const [{ data: settingsRows, error: settingsError }, { data: memberRows, error: membersError }] = await Promise.all([
     db.from("settings").select("key, value"),
     db
       .from("members")
       .select("id, full_name, joined_on, sort_order, family_nodes!family_nodes_member_id_fkey(date_of_birth, deleted_at)")
-      .eq("is_active", true),
+      .eq("is_active", true)
+      .eq("contributes", true),
   ]);
 
   if (settingsError || membersError) {

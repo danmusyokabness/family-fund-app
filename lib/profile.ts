@@ -180,3 +180,31 @@ export function describeResidence(r: Residence | null): string {
   if (!r) return "";
   return [r.place, r.region, r.country].filter(Boolean).join(", ");
 }
+
+/**
+ * Names the family has already typed, offered as suggestions to the next person (most used first,
+ * spelled the way most people spelled them). Only what the viewer can already see is passed in.
+ */
+export function collectSuggestions(people: { education?: EducationEntry[]; work?: WorkEntry[] }[]): { institutions: string[]; employers: string[]; titles: string[] } {
+  const tally = (counts: Map<string, { text: string; n: number }>, raw: string | null | undefined) => {
+    const text = (raw ?? "").trim().replace(/\s+/g, " ");
+    if (!text) return;
+    const key = text.toLowerCase();
+    const entry = counts.get(key);
+    if (entry) entry.n += 1;
+    else counts.set(key, { text, n: 1 });
+  };
+  const institutions = new Map<string, { text: string; n: number }>();
+  const employers = new Map<string, { text: string; n: number }>();
+  const titles = new Map<string, { text: string; n: number }>();
+  for (const p of people) {
+    for (const e of p.education ?? []) tally(institutions, e.institution);
+    for (const w of p.work ?? []) {
+      tally(employers, w.employer);
+      tally(titles, w.title);
+    }
+  }
+  const rank = (m: Map<string, { text: string; n: number }>) =>
+    [...m.values()].sort((a, b) => b.n - a.n || a.text.localeCompare(b.text, undefined, { sensitivity: "base" })).map((v) => v.text);
+  return { institutions: rank(institutions), employers: rank(employers), titles: rank(titles) };
+}

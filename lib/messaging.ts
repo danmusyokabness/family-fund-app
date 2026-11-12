@@ -112,6 +112,7 @@ export async function planMessages(db: SupabaseClient, kind: MessageKind, settin
     .from("members")
     .select("id, full_name, joined_on, member_phones(phone_number, is_primary)")
     .eq("is_active", true)
+    .eq("contributes", true)
     .returns<MemberRow[]>();
   const members = (memberRows ?? []).map((m) => ({
     id: m.id,

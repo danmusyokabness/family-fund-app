@@ -20,6 +20,7 @@ interface Member {
   joined_on: string;
   is_active: boolean;
   is_admin: boolean;
+  contributes: boolean;
   notes: string | null;
   member_phones: MemberPhone[];
   payer_aliases: MemberAlias[];
@@ -81,6 +82,8 @@ export default function MembersManager() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newName, setNewName] = useState("");
   const [newJoinedOn, setNewJoinedOn] = useState("");
+  const [newFamilyOnly, setNewFamilyOnly] = useState(false);
+  const [contributesError, setContributesError] = useState<string | null>(null);
   const [newPrimaryPhone, setNewPrimaryPhone] = useState("");
   const [newAlternatePhones, setNewAlternatePhones] = useState("");
   const [newShortcodes, setNewShortcodes] = useState("");
@@ -187,6 +190,7 @@ export default function MembersManager() {
         body: JSON.stringify({
           fullName: newName,
           joinedOn: newJoinedOn,
+          contributes: !newFamilyOnly,
           primaryPhone: newPrimaryPhone,
           alternatePhones: splitList(newAlternatePhones),
           shortcodes: splitList(newShortcodes),
@@ -197,6 +201,7 @@ export default function MembersManager() {
       if (!res.ok) throw new Error(data.error ?? "Could not add member.");
       setNewName("");
       setNewJoinedOn("");
+      setNewFamilyOnly(false);
       setNewPrimaryPhone("");
       setNewAlternatePhones("");
       setNewShortcodes("");
@@ -258,6 +263,20 @@ export default function MembersManager() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ isActive: !member.is_active }),
     });
+    await loadMembers();
+  }
+
+  async function toggleContributes(member: Member) {
+    setContributesError(null);
+    const res = await fetch(`/api/admin/members/${member.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contributes: !member.contributes }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setContributesError(body.error ?? "Could not change that.");
+    }
     await loadMembers();
   }
 
@@ -373,6 +392,10 @@ export default function MembersManager() {
             <label className={fieldLabel}>Primary phone</label>
             <input value={newPrimaryPhone} onChange={(e) => setNewPrimaryPhone(e.target.value)} placeholder="07..." className={`${inputCls} w-full`} required />
           </div>
+          <label className="flex items-center gap-2 text-xs text-ink-soft sm:col-span-2">
+            <input type="checkbox" checked={newFamilyOnly} onChange={(e) => setNewFamilyOnly(e.target.checked)} />
+            Family only: can use the family tree and chat, but does not contribute to the fund (no ledger, no reminders)
+          </label>
           <input value={newAlternatePhones} onChange={(e) => setNewAlternatePhones(e.target.value)} placeholder="Alternate phones, comma separated" className={`${inputCls} sm:col-span-2`} />
           <input value={newShortcodes} onChange={(e) => setNewShortcodes(e.target.value)} placeholder="Till / business numbers they pay from, comma separated" className={`${inputCls} sm:col-span-2`} />
           <input value={newMaskedPhones} onChange={(e) => setNewMaskedPhones(e.target.value)} placeholder="Numbers as shown on statements, e.g. 254110***358, comma separated" className={`${inputCls} sm:col-span-2`} />
@@ -496,6 +519,7 @@ export default function MembersManager() {
       <div className="paper-card overflow-hidden">
         {loadingMembers && <p className="p-4 text-sm text-ink-soft">Loading...</p>}
         {membersError && <p className="p-4 text-sm text-danger">{membersError}</p>}
+        {contributesError && <p className="p-4 text-sm text-danger">{contributesError}</p>}
         {!loadingMembers && members.length === 0 && (
           <p className="p-4 text-sm text-ink-soft">No members yet — add one above or import a CSV.</p>
         )}
@@ -528,6 +552,11 @@ export default function MembersManager() {
                     {member.is_admin && (
                       <span className="ml-2 rounded bg-brass-soft px-1.5 py-0.5 align-middle text-[10px] font-normal text-brass">
                         Admin
+                      </span>
+                    )}
+                    {member.contributes === false && (
+                      <span className="ml-2 rounded bg-paper px-1.5 py-0.5 align-middle text-[10px] font-normal text-ink-soft" title="Uses the tree and chat; does not contribute">
+                        Family only
                       </span>
                     )}
                   </p>
@@ -567,6 +596,9 @@ export default function MembersManager() {
                   <button onClick={() => startEdit(member)} className="link">Edit</button>
                   <button onClick={() => toggleActive(member)} className="link">
                     {member.is_active ? "Deactivate" : "Reactivate"}
+                  </button>
+                  <button onClick={() => toggleContributes(member)} className="link" title="A family-only member uses the tree and chat but has no ledger and is never sent reminders">
+                    {member.contributes === false ? "Make contributing" : "Make family-only"}
                   </button>
                   {isSuperAdmin && (
                     <button onClick={() => toggleMemberAdmin(member)} disabled={togglingAdminId === member.id} className="link disabled:opacity-60">

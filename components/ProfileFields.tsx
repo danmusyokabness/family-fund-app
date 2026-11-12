@@ -12,6 +12,19 @@ import { MAX_ENTRIES, type EducationEntry, type Residence, type WorkEntry } from
 
 const input = "w-full rounded-md border border-line px-3 py-2 text-sm";
 
+/** What the family has already typed comes first, then the built-in list, with no repeats (ignoring capitals). */
+function merged(family: string[] | undefined, builtIn: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const name of [...(family ?? []), ...builtIn]) {
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  return out;
+}
+
 export function emptyEducation(): EducationEntry {
   return { level: EDUCATION_LEVELS[0], institution: "", course: null, startMonth: null, endMonth: null, current: false };
 }
@@ -66,12 +79,12 @@ function Months({
   );
 }
 
-export function EducationEditor({ value, onChange }: { value: EducationEntry[]; onChange: (next: EducationEntry[]) => void }) {
+export function EducationEditor({ value, onChange, institutions }: { value: EducationEntry[]; onChange: (next: EducationEntry[]) => void; institutions?: string[] }) {
   const update = (i: number, patch: Partial<EducationEntry>) => onChange(value.map((e, idx) => (idx === i ? { ...e, ...patch } : e)));
   return (
     <div className="space-y-2">
       <datalist id="institution-suggestions">
-        {INSTITUTIONS.map((name) => (
+        {merged(institutions, INSTITUTIONS).map((name) => (
           <option key={name} value={name} />
         ))}
       </datalist>
@@ -118,12 +131,17 @@ export function EducationEditor({ value, onChange }: { value: EducationEntry[]; 
   );
 }
 
-export function WorkEditor({ value, onChange }: { value: WorkEntry[]; onChange: (next: WorkEntry[]) => void }) {
+export function WorkEditor({ value, onChange, employers, titles }: { value: WorkEntry[]; onChange: (next: WorkEntry[]) => void; employers?: string[]; titles?: string[] }) {
   const update = (i: number, patch: Partial<WorkEntry>) => onChange(value.map((e, idx) => (idx === i ? { ...e, ...patch } : e)));
   return (
     <div className="space-y-2">
+      <datalist id="employer-suggestions">
+        {merged(employers, []).map((name) => (
+          <option key={name} value={name} />
+        ))}
+      </datalist>
       <datalist id="job-title-suggestions">
-        {JOB_TITLES.map((name) => (
+        {merged(titles, JOB_TITLES).map((name) => (
           <option key={name} value={name} />
         ))}
       </datalist>
@@ -157,7 +175,7 @@ export function WorkEditor({ value, onChange }: { value: WorkEntry[]; onChange: 
             </label>
             <label className="block text-xs text-ink-soft">
               Employer or business (optional)
-              <input value={w.employer ?? ""} onChange={(ev) => update(i, { employer: ev.target.value || null })} className={input} />
+              <input value={w.employer ?? ""} list="employer-suggestions" onChange={(ev) => update(i, { employer: ev.target.value || null })} className={input} />
             </label>
           </div>
           <Months start={w.startMonth} end={w.endMonth} current={w.current} currentLabel="Still doing this" onChange={(m) => update(i, m)} />

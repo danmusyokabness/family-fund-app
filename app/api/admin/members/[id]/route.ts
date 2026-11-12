@@ -39,6 +39,8 @@ interface UpdateMemberBody {
   maskedPhones?: string[];
   /** Granting or removing admin access — SUPERADMIN ONLY, checked separately below. */
   isAdmin?: boolean;
+  /** false = family-only (no ledger, no reminders). Refused while the member has payments counted for them. */
+  contributes?: boolean;
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -77,6 +79,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   if (body.isActive !== undefined) updates.is_active = body.isActive;
   if (body.notes !== undefined) updates.notes = body.notes.trim() || null;
+
+  if (body.contributes !== undefined) {
+    if (typeof body.contributes !== "boolean") return NextResponse.json({ error: "contributes must be true or false." }, { status: 400 });
+    if (body.contributes === false) {
+      // Their payments would silently drop out of the group figures, so a member with payments cannot be made family-only.
+      const { count } = await db.from("payment_allocations").select("id", { count: "exact", head: true }).eq("member_id", id);
+      if ((count ?? 0) > 0) {
+        return NextResponse.json({ error: "This member has payments recorded, so they cannot be made family-only. Family-only is for relatives who never contribute." }, { status: 409 });
+      }
+    }
+    updates.contributes = body.contributes;
+  }
 
   if (body.isAdmin !== undefined) {
     const superAuth = await requireSuperAdmin();

@@ -5,6 +5,8 @@
 
 import { redirect } from "next/navigation";
 import { getMemberSession, getAdminSession } from "@/lib/auth";
+import { memberContributes } from "@/lib/access";
+import { supabaseAdmin } from "@/lib/supabase";
 import AppNav from "@/components/AppNav";
 import FullLedger from "@/components/FullLedger";
 
@@ -14,6 +16,7 @@ export default async function LedgerPage() {
   const member = await getMemberSession();
   const isAdmin = await getAdminSession();
   if (!member && !isAdmin) redirect("/login");
+  if (member && !isAdmin && !(await memberContributes(supabaseAdmin(), member.memberId))) redirect("/tree");
 
   return (
     <main className="min-h-screen">

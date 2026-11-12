@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import {
   buildForest, wouldCreateCycle, ancestorIds, descendantIds, sanitizeNodePatch, changedFields, nameSimilarity,
   rankClaimCandidates, rankParentCandidates, needsToConnect, editableNodeIds, addChildTargetIds, viewForViewer, withRanks,
-  nodeFromRow, rowFromPatch, HIDEABLE_FIELDS, needsProfile, type TreeNode, type TreeRow,
+  nodeFromRow, rowFromPatch, HIDEABLE_FIELDS, needsProfile, birthKey, type TreeNode, type TreeRow,
 } from "../lib/family-tree.ts";
 import { planOnboarding } from "../lib/onboarding.ts";
+import { collectSuggestions } from "../lib/profile.ts";
 
 let counter = 0;
 function node(partial: Partial<TreeNode> & { id: string; name: string }): TreeNode {
@@ -462,5 +463,33 @@ test("the details form: someone who already has an entry cannot choose themselve
   const today = "2026-11-11";
   assert.equal(planOnboarding({ nodes: [root, kid], mine: root, patch: {}, parent: { id: "root" }, today }).ok, false);
   assert.equal(planOnboarding({ nodes: [root, kid], mine: root, patch: {}, parent: { id: "kid" }, today }).ok, false);
+});
+
+test("siblings with only an approximate birth are placed by that year, between those with exact dates", () => {
+  assert.equal(birthKey({ dateOfBirth: "1961-03-27", birthdate: "around 1950" }), "1961-03-27"); // a real date wins
+  assert.equal(birthKey({ dateOfBirth: null, birthdate: "around 1950" }), "1950-07-01");
+  assert.equal(birthKey({ dateOfBirth: null, birthdate: "the 1960s" }), "1960-07-01");
+  assert.equal(birthKey({ dateOfBirth: null, birthdate: "12345" }), null); // not a year
+  assert.equal(birthKey({ dateOfBirth: null, birthdate: "long ago" }), null);
+  const a = node({ id: "a", name: "A", dateOfBirth: "1948-01-01" });
+  const b = node({ id: "b", name: "B", birthdate: "around 1955" });
+  const c = node({ id: "c", name: "C", dateOfBirth: "1962-06-06" });
+  const d = node({ id: "d", name: "D" }); // no date at all: after everyone with one
+  assert.deepEqual(buildForest([d, c, b, a]).map((x) => x.node.name), ["A", "B", "C", "D"]);
+});
+
+test("suggestions: what the family already typed is offered first, most used first, spelled the way people spelled it, with no repeats", () => {
+  const edu = (institution: string) => ({ level: "Diploma", institution, course: null, startMonth: null, endMonth: null, current: false });
+  const job = (employer: string | null, title: string | null) => ({ status: "Employed", employer, title, sector: null, startMonth: null, endMonth: null, current: true });
+  const result = collectSuggestions([
+    { education: [edu("Moi University"), edu("Kenyatta University")], work: [job("Kenya Power", "Engineer")] },
+    { education: [edu("moi university")], work: [job("kenya power", "Engineer"), job(null, "  ")] },
+    { education: [edu("Moi University")] },
+    {},
+  ]);
+  assert.deepEqual(result.institutions, ["Moi University", "Kenyatta University"]);
+  assert.deepEqual(result.employers, ["Kenya Power"]);
+  assert.deepEqual(result.titles, ["Engineer"]);
+  assert.deepEqual(collectSuggestions([]), { institutions: [], employers: [], titles: [] });
 });
 

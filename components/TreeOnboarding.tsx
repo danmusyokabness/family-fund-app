@@ -17,7 +17,7 @@ import { useMemo, useState } from "react";
 import { descendantIds, rankClaimCandidates, rankParentCandidates, type PublicTreeNode } from "@/lib/family-tree";
 import { asTreeNodes, born, initials, Photo, shrinkPhoto, type TreeData } from "./tree-common";
 import { dropBlankEducation, dropBlankWork, EducationEditor, ResidenceEditor, ShowToFamily, WorkEditor } from "./ProfileFields";
-import type { EducationEntry, Residence, WorkEntry } from "@/lib/profile";
+import { collectSuggestions, type EducationEntry, type Residence, type WorkEntry } from "@/lib/profile";
 
 const input = "w-full rounded-md border border-line px-3 py-2 text-sm";
 const NOT_LISTED = "__new__";
@@ -96,6 +96,7 @@ function WhoAreYou({ data, onDone, onNotListed }: { data: TreeData; onDone: () =
 function DetailsForm({ data, mine, onDone }: { data: TreeData; mine: PublicTreeNode | null; onDone: () => void }) {
   const firstName = data.me.name.trim().split(/\s+/)[0] ?? "";
   const all = useMemo(() => asTreeNodes(data.nodes), [data.nodes]);
+  const suggestions = useMemo(() => collectSuggestions(data.nodes), [data.nodes]);
   const livingParent = mine?.parentId ? data.nodes.find((n) => n.id === mine.parentId) ?? null : null;
   const treeIsEmpty = data.nodes.length === 0;
   // Nobody may be preselected as the parent: the most likely ones are listed first and the person must choose.
@@ -277,13 +278,13 @@ function DetailsForm({ data, mine, onDone }: { data: TreeData; mine: PublicTreeN
 
       <div className="paper-card space-y-2 p-4">
         <h2 className="font-medium">Where you studied (optional)</h2>
-        <EducationEditor value={education} onChange={setEducation} />
+        <EducationEditor value={education} onChange={setEducation} institutions={suggestions.institutions} />
         <ShowToFamily field="education" hidden={hidden} onToggle={toggle} />
       </div>
 
       <div className="paper-card space-y-2 p-4">
         <h2 className="font-medium">Your work (optional)</h2>
-        <WorkEditor value={work} onChange={setWork} />
+        <WorkEditor value={work} onChange={setWork} employers={suggestions.employers} titles={suggestions.titles} />
         <ShowToFamily field="work" hidden={hidden} onToggle={toggle} />
       </div>
 

@@ -67,11 +67,23 @@ export interface TreeBranch {
 // Ordering: eldest first where the birth date is known, then unknown
 // dates, then by when the node was created, then by name.
 // ---------------------------------------------------------------------
+/**
+ * The date used to put people in age order: the real birth date, or, when only an
+ * approximate one was given ("around 1950"), the middle of that year. Null when neither.
+ */
+export function birthKey(n: Pick<TreeNode, "dateOfBirth" | "birthdate">): string | null {
+  if (n.dateOfBirth) return n.dateOfBirth;
+  const year = n.birthdate?.match(/(?:^|\D)(1[89]\d\d|20\d\d)(?!\d)/)?.[1];
+  return year ? `${year}-07-01` : null;
+}
+
 export function compareSiblings(a: TreeNode, b: TreeNode): number {
   if (a.rank !== undefined && b.rank !== undefined) return a.rank - b.rank;
-  if (a.dateOfBirth && b.dateOfBirth && a.dateOfBirth !== b.dateOfBirth) return a.dateOfBirth < b.dateOfBirth ? -1 : 1;
-  if (a.dateOfBirth && !b.dateOfBirth) return -1;
-  if (!a.dateOfBirth && b.dateOfBirth) return 1;
+  const ka = birthKey(a);
+  const kb = birthKey(b);
+  if (ka && kb && ka !== kb) return ka < kb ? -1 : 1;
+  if (ka && !kb) return -1;
+  if (!ka && kb) return 1;
   if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? -1 : 1;
   return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
 }

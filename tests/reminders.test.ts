@@ -135,11 +135,11 @@ const SETTINGS = mergeSettingsWithDefaults({ fund_name: "Test Fund", till_number
 const phones = (n: string | null) => (n ? [{ phone_number: n, is_primary: true }] : []);
 const TABLES = (): Record<string, Row[]> => ({
   members: [
-    { id: "owes", full_name: "Alice Owes", joined_on: "2020-01-01", is_active: true, member_phones: phones("254700000001") },
-    { id: "nophone", full_name: "Bob NoPhone", joined_on: "2020-01-01", is_active: true, member_phones: phones(null) },
-    { id: "paid", full_name: "Cara Paid", joined_on: "2020-01-01", is_active: true, member_phones: phones("254700000003") },
-    { id: "sent", full_name: "Dan Sent", joined_on: "2020-01-01", is_active: true, member_phones: phones("254700000004") },
-    { id: "pending", full_name: "Eve Pending", joined_on: "2020-01-01", is_active: true, member_phones: phones("254700000005") },
+    { id: "owes", full_name: "Alice Owes", joined_on: "2020-01-01", is_active: true, contributes: true, member_phones: phones("254700000001") },
+    { id: "nophone", full_name: "Bob NoPhone", joined_on: "2020-01-01", is_active: true, contributes: true, member_phones: phones(null) },
+    { id: "paid", full_name: "Cara Paid", joined_on: "2020-01-01", is_active: true, contributes: true, member_phones: phones("254700000003") },
+    { id: "sent", full_name: "Dan Sent", joined_on: "2020-01-01", is_active: true, contributes: true, member_phones: phones("254700000004") },
+    { id: "pending", full_name: "Eve Pending", joined_on: "2020-01-01", is_active: true, contributes: true, member_phones: phones("254700000005") },
   ],
   payment_allocations: [{ member_id: "paid", amount: 1000000000, payments: { paid_at: "2026-09-01T00:00:00.000Z" } }],
   payments: [{ suggested_member_id: "pending", match_status: "needs_confirmation", amount: 300, kind: "mpesa", paid_at: "2026-09-02T00:00:00.000Z" }],
@@ -177,6 +177,16 @@ test("report plan: EVERYONE with a phone gets one (fully paid included); a remin
   for (const m of plan.messages) {
     for (const other of plan.messages) assert.ok(!m.message.includes(other.fullName.split(" ")[0]) || m.message === "", `${m.fullName}'s report must not name ${other.fullName}`);
   }
+});
+
+test("a family-only member (does not contribute) is never offered a reminder or a report", async () => {
+  const tables = TABLES();
+  tables.members.push({ id: "family", full_name: "Fay Family", joined_on: "2020-01-01", is_active: true, contributes: false, member_phones: phones("254700000009") });
+  const reminder = await planMessages(fakeDb(tables, []), "reminder", SETTINGS);
+  const report = await planMessages(fakeDb(tables, []), "report", SETTINGS);
+  assert.equal(reminder.messages.some((m) => m.memberId === "family"), false);
+  assert.equal(report.messages.some((m) => m.memberId === "family"), false);
+  assert.equal(report.messages.some((m) => m.memberId === "owes"), true); // a contributing member is still there
 });
 
 test("once a record of a sent message exists for this month, that member is not offered it again", async () => {
