@@ -248,11 +248,3 @@ test("family-only members: only an admin changes it, and never for a member who 
   assert.ok(/count \?\? 0\) > 0/.test(route) && route.includes("payment_allocations"), "a member with payments must not be made family-only");
   assert.ok(read("app/api/admin/members/route.ts").includes("contributes: body.contributes !== false"), "new members contribute unless said otherwise");
 });
-
-test("the dashboard shows the Pay helper to members only, using the real monthly amount and Till number", () => {
-  const dash = read("components/MemberDashboard.tsx");
-  assert.ok(/data\.me && <PayHelper balance=\{data\.me\.balance\} targetAmount=\{data\.targetAmount\} tillNumber=\{data\.tillNumber\}/.test(dash));
-  const helper = read("components/PayHelper.tsx");
-  assert.ok(!/fetch\(/.test(helper), "the helper only shows numbers; it never calls the server or moves money");
-});
-

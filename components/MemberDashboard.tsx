@@ -4,7 +4,6 @@
 import { useEffect, useState } from "react";
 import type { DashboardResult, CellStatus } from "@/lib/dashboard";
 import OtherIncomeNotes from "./OtherIncomeNotes";
-import PayHelper from "./PayHelper";
 
 type ApiResult = DashboardResult & { fundName: string; tillNumber: string };
 
@@ -89,9 +88,6 @@ export default function MemberDashboard() {
           <p className="figures font-serif text-2xl font-semibold">KES {money(data.group.fundTotal)}</p>
         </div>
       </div>
-
-      {/* ---- Pay helper: only for a member (the main admin login has no balance) ---- */}
-      {data.me && <PayHelper balance={data.me.balance} targetAmount={data.targetAmount} tillNumber={data.tillNumber} />}
 
       {/* ---- Ledger ---- */}
       <div className="paper-card overflow-hidden">

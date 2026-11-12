@@ -621,38 +621,3 @@ test("cancel out: erasing withdrawal, deposit and fee and adding the rounding li
   const lines = JSON.stringify(buildFullLedger(after));
   assert.ok(!lines.includes("Emergency") && !lines.includes("Pay Bill Charge") && !lines.includes("Ann One"), "nothing about the erased entries may remain");
 });
-
-// ---------------------------------------------------------------------
-// The Pay helper: how much to send for a number of months (lib/pay.ts)
-// ---------------------------------------------------------------------
-import { defaultMonths, monthsOwed, payAmount, MAX_PAY_MONTHS } from "../lib/pay.ts";
-
-test("pay helper: months owed rounds up, and nothing is owed when the balance is zero or the monthly amount is unknown", () => {
-  assert.equal(monthsOwed(300, 300), 1);
-  assert.equal(monthsOwed(500, 300), 2);
-  assert.equal(monthsOwed(600, 300), 2);
-  assert.equal(monthsOwed(0, 300), 0);
-  assert.equal(monthsOwed(-300, 300), 0); // credit ahead
-  assert.equal(monthsOwed(500, 0), 0);
-  assert.equal(defaultMonths(600, 300), 2);
-  assert.equal(defaultMonths(0, 300), 1); // nothing owed: offer one month in advance
-  assert.equal(defaultMonths(300 * 40, 300), MAX_PAY_MONTHS);
-});
-
-test("pay helper: paying what is owed costs exactly the balance, fewer months cost whole months, extra months are in advance", () => {
-  // owes 500 with a monthly amount of 300 (2 months owed)
-  assert.equal(payAmount(1, 500, 300), 300);
-  assert.equal(payAmount(2, 500, 300), 500); // exactly the balance, not 600
-  assert.equal(payAmount(3, 500, 300), 800); // balance + one month ahead
-  // owes exactly two months
-  assert.equal(payAmount(2, 600, 300), 600);
-  // nothing owed or credit ahead: whole months in advance
-  assert.equal(payAmount(1, 0, 300), 300);
-  assert.equal(payAmount(3, -300, 300), 900);
-  // M-PESA Till payments are whole shillings: a balance with cents is rounded up, never down
-  assert.equal(payAmount(1, 250.4, 300), 251);
-  // the number of months is kept sensible
-  assert.equal(payAmount(0, 0, 300), 300);
-  assert.equal(payAmount(99, 0, 300), MAX_PAY_MONTHS * 300);
-});
-

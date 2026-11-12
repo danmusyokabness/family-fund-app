@@ -157,8 +157,6 @@ You do this by hand, about once around the 7th (reminder) and once around the 15
 | Around the **15th** | **Reminders** tab, **Fund report**: press **WhatsApp** for each member listed. |
 | Once a month | **Health** tab, **Download full backup**. |
 
-Members also have a **Pay my contribution** box on their dashboard: they choose how many months, and it shows the amount, your Till number and the M-PESA steps. It does not take money by itself; their payment shows up after you import the next statement.
-
 The **Health** tab shows the next reminder and report dates. The app never sends anything by itself, so nothing goes out if you forget. If the payment data is old, the Reminders tab says so: import first, so people who have already paid are not reminded.
 
 If money was taken out and then put back, the main admin login (only that one) can erase it on the **Payments** tab, under **Cancel out a withdrawal and the deposit that put it back**: tick the withdrawal and the deposit(s) that replaced it. The M-PESA fee charged on a deposit goes with it. The deposit, less its fee, must equal the withdrawal, so the Total in account does not change; a few cents of difference stay as one line called Rounding. Nothing is kept about what was erased, and the erased M-PESA receipts are skipped if you import an old statement again.
